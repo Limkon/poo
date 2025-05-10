@@ -235,12 +235,12 @@ app.use((req, res, next) => {
     }
 
     if (req.path.startsWith(gatewayUserAdminBasePath)) {
-        return next(); // 由後面的 userAdminRouter 及其 ensureMasterAdmin 處理
+        return next();
     }
 
     if (req.path.startsWith(mainAppAdminBasePath)) {
         if (req.cookies.auth === '1') {
-            return next(); // 允許已登入使用者訪問主應用的 /admin/*，將被代理
+            return next();
         } else {
             console.warn(`[AUTH_GATE] 未經身份驗證的使用者嘗試存取主應用的管理路徑: ${req.path}`);
             return res.redirect(`/login?returnTo=${encodeURIComponent(req.originalUrl)}`);
@@ -252,12 +252,12 @@ app.use((req, res, next) => {
             if (req.cookies.is_master === 'true') {
                 return res.redirect(gatewayUserAdminBasePath);
             } else {
-                return res.redirect(mainAppAdminBasePath); // 普通使用者已登入，訪問 /login 則跳轉到文章管理
+                return res.redirect(mainAppAdminBasePath);
             }
         }
         return next();
     }
-    return next(); // 其他公開路徑，將被代理
+    return next();
 });
 
 
@@ -335,8 +335,7 @@ app.get('/login', (req, res) => {
         if (req.cookies.is_master === 'true') {
             return res.redirect(req.query.returnTo && req.query.returnTo.startsWith('/user-admin') ? req.query.returnTo : '/user-admin');
         } else {
-            // **修改：普通使用者已登入，如果嘗試訪問 /login，則跳轉到 /admin (主應用的文章管理)**
-            const returnToTarget = req.query.returnTo && !req.query.returnTo.startsWith('/user-admin') ? req.query.returnTo : '/admin';
+            const returnToTarget = req.query.returnTo && !req.query.returnTo.startsWith('/user-admin') ? req.query.returnTo : '/admin'; // **確保普通使用者跳轉到 /admin**
             return res.redirect(returnToTarget);
         }
     }
@@ -429,11 +428,22 @@ app.post('/do_login', (req, res) => {
                 res.cookie('is_master', 'false', { maxAge: cookieMaxAge, httpOnly: true, path: '/', sameSite: 'Lax' });
                 console.log(`[AUTH_GATE] 用戶 '${username}' 登錄成功。`);
                 // **修改：普通使用者登入後，重定向到 /admin (由主應用處理的文章管理)**
-                let redirectTarget = returnToUrl || '/admin'; // 默認跳轉到主應用的 /admin
-                if (returnToUrl && returnToUrl.startsWith('/user-admin')) { // 如果 returnTo 是 user-admin，則忽略，跳轉到 /admin
+                let redirectTarget = returnToUrl || '/admin';
+                if (returnToUrl && returnToUrl.startsWith('/user-admin')) {
                     redirectTarget = '/admin';
                 }
                 // 如果 returnToUrl 本身就是 /admin 或 /admin/* (且不是 /user-admin/*)，則使用它
+                // 否則，如果 returnToUrl 是其他公開頁面，也使用它
+                // 只有當 returnToUrl 是 /user-admin/* 或未定義時，才強制為 /admin
+                if (returnToUrl && !returnToUrl.startsWith('/user-admin') && !returnToUrl.startsWith('/admin')) {
+                    // 如果 returnTo 是其他非管理頁面，例如 /articles/some-id，則跳轉到該頁面
+                    redirectTarget = returnToUrl;
+                } else if (!returnToUrl || returnToUrl === '/' || returnToUrl.startsWith('/user-admin')) {
+                    // 如果沒有 returnTo，或者 returnTo 是首頁，或者 returnTo 是 user-admin，則跳轉到文章管理
+                    redirectTarget = '/admin';
+                }
+                // 如果 returnToUrl 已經是 /admin 或 /admin/*，則 redirectTarget 會是它
+                console.log(`[AUTH_GATE] 普通使用者 '${username}' 登錄後重定向到: ${redirectTarget}`);
                 return res.redirect(redirectTarget);
             } else {
                 return res.redirect(`/login?error=invalid${returnToUrl ? '&returnTo=' + encodeURIComponent(returnToUrl) : ''}`);
