@@ -12,7 +12,7 @@ import {
 
 const router = express.Router();
 
-// --- Multer 配置 (保持不變) ---
+// --- Multer 配置 ---
 async function ensureArticleUploadDir(articleId) {
   const dir = path.join(publicUploadsArticlesDir, articleId);
   try { await fs.access(dir); } catch { await fs.mkdir(dir, { recursive: true }); }
@@ -25,7 +25,7 @@ const articleStorage = multer.diskStorage({
     if (req.isNewArticleFlow && !req.body.articleIdForUpload) {
         req.tempGeneratedArticleId = articleId;
     }
-    const uploadPath = await ensureArticleUploadDir(articleId);
+    const uploadPath = await ensureArticleUploadDir(articleId); // 使用 articleId (params 或 body 或生成的)
     cb(null, uploadPath);
   },
   filename: function (req, file, cb) {
@@ -47,7 +47,7 @@ function markNewArticleFlow(req, res, next) {
     next();
 }
 
-// =========== PUBLIC ROUTES (保持不變) ===========
+// =========== PUBLIC ROUTES ===========
 router.get('/', async (req, res, next) => {
   try {
     let articles = await getAllArticles();
@@ -65,7 +65,10 @@ router.get('/', async (req, res, next) => {
       categories: CATEGORIES,
       currentCategory: category || '',
       currentSearch: q || '',
-      pageTitle: '網路分享站'
+      pageTitle: '網路分享站',
+      // 公開頁面通常不需要知道登入狀態，除非有特定功能
+      // isUserLoggedIn: req.cookies.auth === '1',
+      // isUserMaster: req.cookies.is_master === 'true'
     });
   } catch (err) { console.error("[Public] 獲取主頁文章時出錯:", err); next(err); }
 });
@@ -74,7 +77,12 @@ router.get('/articles/:id', async (req, res, next) => {
   try {
     const article = await getArticleById(req.params.id);
     if (!article) { return res.status(404).render('public/404', { pageTitle: '未找到分享'}); }
-    res.render('public/show_article', { article, pageTitle: article.title });
+    res.render('public/show_article', {
+        article,
+        pageTitle: article.title,
+        // isUserLoggedIn: req.cookies.auth === '1', // 如果詳情頁也需要登出按鈕
+        // isUserMaster: req.cookies.is_master === 'true'
+    });
   } catch (err) { console.error(`[Public] 獲取文章 ${req.params.id} 時出錯:`, err); next(err); }
 });
 
@@ -105,10 +113,7 @@ router.get('/articles/download/:id/:filename', async (req, res, next) => {
 });
 
 // =========== ADMIN ROUTES ===========
-// (注意：start.cjs 中的全局中介軟體已保護 /admin 路徑的訪問權限)
-
 // GET /admin (文章管理列表 - 主應用處理)
-// **修改：傳遞 isUserLoggedIn 和 isUserMaster 給模板**
 router.get('/admin', async (req, res, next) => {
   try {
     const articles = await getAllArticles();
@@ -117,8 +122,8 @@ router.get('/admin', async (req, res, next) => {
         pageTitle: '後台管理 - 文章列表',
         success: req.query.success,
         error: req.query.error,
-        isUserLoggedIn: req.cookies.auth === '1',
-        isUserMaster: req.cookies.is_master === 'true'
+        isUserLoggedIn: req.cookies.auth === '1', // **確保傳遞**
+        isUserMaster: req.cookies.is_master === 'true' // **確保傳遞**
     });
   } catch (err) {
     console.error("[Admin] 獲取管理列表文章時出錯:", err);
@@ -127,15 +132,14 @@ router.get('/admin', async (req, res, next) => {
 });
 
 // GET /admin/new (顯示新建文章表單 - 主應用處理)
-// **修改：傳遞 isUserLoggedIn 和 isUserMaster 給模板**
 router.get('/admin/new', (req, res) => {
   res.render('admin/new_article', {
     pageTitle: '後台管理 - 新建分享',
     article: { title: '', content: '', category: CATEGORIES[0], attachments: [] },
     categories: CATEGORIES,
     error: null,
-    isUserLoggedIn: req.cookies.auth === '1',
-    isUserMaster: req.cookies.is_master === 'true'
+    isUserLoggedIn: req.cookies.auth === '1', // **確保傳遞**
+    isUserMaster: req.cookies.is_master === 'true' // **確保傳遞**
   });
 });
 
@@ -148,8 +152,8 @@ router.post('/admin/new', markNewArticleFlow, upload.array('attachments', 10), a
       article: { title, content, category, attachments: [] },
       categories: CATEGORIES,
       error: '標題和分類是必填項。',
-      isUserLoggedIn: req.cookies.auth === '1', // **新增**
-      isUserMaster: req.cookies.is_master === 'true' // **新增**
+      isUserLoggedIn: req.cookies.auth === '1', // **確保傳遞**
+      isUserMaster: req.cookies.is_master === 'true' // **確保傳遞**
     });
   }
   try {
@@ -167,12 +171,11 @@ router.post('/admin/new', markNewArticleFlow, upload.array('attachments', 10), a
         }
     }
     await saveArticle(newArticleData);
-    res.redirect(`/admin?success=分享已成功創建`); // **修改：重定向到 /admin 而不是 /admin/articles**
+    res.redirect(`/admin?success=分享已成功創建`);
   } catch (err) { console.error("[Admin] 創建新文章時出錯:", err); next(err); }
 });
 
 // GET /admin/edit/:id (顯示編輯文章表單 - 主應用處理)
-// **修改：傳遞 isUserLoggedIn 和 isUserMaster 給模板**
 router.get('/admin/edit/:id', async (req, res, next) => {
   try {
     const article = await getArticleById(req.params.id);
@@ -183,8 +186,8 @@ router.get('/admin/edit/:id', async (req, res, next) => {
       categories: CATEGORIES,
       error: req.query.error,
       success: req.query.success,
-      isUserLoggedIn: req.cookies.auth === '1',
-      isUserMaster: req.cookies.is_master === 'true'
+      isUserLoggedIn: req.cookies.auth === '1', // **確保傳遞**
+      isUserMaster: req.cookies.is_master === 'true' // **確保傳遞**
     });
   } catch (err) { console.error(`[Admin] 獲取文章 ${req.params.id} 進行編輯時出錯:`, err); next(err); }
 });
@@ -200,8 +203,8 @@ router.post('/admin/edit/:id', upload.array('new_attachments', 5), async (req, r
       article: {...article, title, content, category},
       categories: CATEGORIES,
       error: '標題和分類是必填項。',
-      isUserLoggedIn: req.cookies.auth === '1', // **新增**
-      isUserMaster: req.cookies.is_master === 'true' // **新增**
+      isUserLoggedIn: req.cookies.auth === '1', // **確保傳遞**
+      isUserMaster: req.cookies.is_master === 'true' // **確保傳遞**
     });
   }
   try {
@@ -216,7 +219,7 @@ router.post('/admin/edit/:id', upload.array('new_attachments', 5), async (req, r
         }
     }
     await saveArticle(article);
-    res.redirect(`/admin?success=分享內容已成功更新`); // **修改：重定向到 /admin**
+    res.redirect(`/admin?success=分享內容已成功更新`);
   } catch (err) { console.error(`[Admin] 更新文章 ${articleId} 時出錯:`, err); next(err); }
 });
 
@@ -225,7 +228,7 @@ router.post('/admin/delete/:id', async (req, res, next) => {
   try {
     const success = await deleteArticleById(req.params.id);
     if (!success) { return res.redirect('/admin?error=未找到指定的分享內容或刪除失敗'); }
-    res.redirect('/admin?success=分享內容及其附件已成功刪除'); // **修改：重定向到 /admin**
+    res.redirect('/admin?success=分享內容及其附件已成功刪除');
   } catch (err) { console.error(`[Admin] 刪除文章 ${req.params.id} 時出錯:`, err); next(err); }
 });
 
