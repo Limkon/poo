@@ -19,36 +19,37 @@
 ## 專案檔案結構
 
 network-sharing-site/
-├── data/
-│   └── articles/         # (執行時自動建立) 儲存文章的 JSON 資料檔案
-├── public/
-│   ├── css/
-│   │   └── style.css     # 主要的 CSS 樣式檔案
-│   ├── js/
-│   │   └── script.js     # 用戶端 JavaScript (主要用於 Quill 編輯器初始化)
-│   └── uploads/
-│       └── articles/     # (執行時自動建立) 儲存文章附件的實際檔案
-├── views/
-│   ├── partials/         # EJS 範本的共享部分
-│   │   ├── header.ejs    # 頁首
-│   │   └── footer.ejs    # 頁腳
-│   ├── admin/            # 後台管理相關的 EJS 範本
-│   │   ├── list_articles.ejs   # 管理員查看文章列表
-│   │   ├── new_article.ejs     # 新建文章表單
-│   │   └── edit_article.ejs    # 編輯文章表單
-│   ├── public/           # 公開頁面相關的 EJS 範本
-│   │   ├── show_article.ejs    # 顯示單個文章詳情
-│   │   ├── 404.ejs             # 404 頁面未找到
-│   │   └── error.ejs           # 通用錯誤頁面
-│   └── index.ejs           # 網站首頁 - 公開的文章列表
-├── routes/
-│   └── articles.js       # 處理所有與文章相關的路由 (包括公開和管理)
-├── utils/
-│   └── articleStore.js   # 管理文章資料的工具函數 (讀取、寫入 JSON 檔案等)
-├── .env                    # (可選) 環境變數設定檔 (例如埠號)
-├── package.json            # 專案依賴、腳本等設定資訊
-├── server.js               # 主應用程式 - 分享網站的核心邏輯 (Express 應用)
-└── start.cjs               # 應用程式啟動腳本，包含認證閘道和反向代理邏輯
++-- data/
+|   +-- articles/         # (執行時自動建立) 儲存文章的 JSON 資料檔案
++-- public/
+|   +-- css/
+|   |   +-- style.css     # 主要的 CSS 樣式檔案
+|   +-- js/
+|   |   +-- script.js     # 用戶端 JavaScript (主要用於 Quill 編輯器初始化)
+|   +-- uploads/
+|       +-- articles/     # (執行時自動建立) 儲存文章附件的實際檔案
++-- views/
+|   +-- partials/         # EJS 範本的共享部分
+|   |   +-- header.ejs    # 頁首
+|   |   +-- footer.ejs    # 頁腳
+|   +-- admin/            # 後台管理相關的 EJS 範本
+|   |   +-- list_articles.ejs   # 管理員查看文章列表
+|   |   +-- new_article.ejs     # 新建文章表單
+|   |   +-- edit_article.ejs    # 編輯文章表單
+|   +-- public/           # 公開頁面相關的 EJS 範本
+|   |   +-- show_article.ejs    # 顯示單個文章詳情
+|   |   +-- 404.ejs             # 404 頁面未找到
+|   |   +-- error.ejs           # 通用錯誤頁面
+|   +-- index.ejs           # 網站首頁 - 公開的文章列表
++-- routes/
+|   +-- articles.js       # 處理所有與文章相關的路由 (包括公開和管理)
++-- utils/
+|   +-- articleStore.js   # 管理文章資料的工具函數 (讀取、寫入 JSON 檔案等)
++-- .env                    # (可選) 環境變數設定檔 (例如埠號)
++-- package.json            # 專案依賴、腳本等設定資訊
++-- server.js               # 主應用程式 - 分享網站的核心邏輯 (Express 應用)
++-- start.cjs               # 應用程式啟動腳本，包含認證閘道和反向代理邏輯
+
 
 
 ## 安裝與啟動
