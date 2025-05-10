@@ -1,3 +1,6 @@
+// start.cjs (認證網關和反向代理)
+require('dotenv').config(); // **重要：在文件頂部加載 .env 文件**
+
 const express = require('express');
 const bodyParser = require('body-parser');
 const cookieParser = require('cookie-parser');
@@ -8,18 +11,18 @@ const crypto = require('crypto');
 const { createProxyMiddleware } = require('http-proxy-middleware');
 
 // --- 1. 配置和常量 ---
-const PUBLIC_PORT = 8100; // 用戶訪問的公開端口
-const APP_INTERNAL_PORT = 3000; // server.js (主應用) 固定監聽的內部端口
+// **修改：優先從 .env 讀取端口，否則使用默認值**
+const PUBLIC_PORT = process.env.PUBLIC_PORT || 8100;
+const APP_INTERNAL_PORT = process.env.APP_INTERNAL_PORT || 3000;
 
-// 加密和密碼存儲文件路徑
 const MASTER_PASSWORD_STORAGE_FILE = path.join(__dirname, 'master_auth_config.enc');
-const USER_CREDENTIALS_STORAGE_FILE = path.join(__dirname, 'user_credentials.enc'); // 保留以備將來擴展，目前主要用於主密碼
-const MASTER_SECRET_KEY_FILE = path.join(__dirname, 'encryption.secret.key'); // 主加密密鑰存儲文件
+const USER_CREDENTIALS_STORAGE_FILE = path.join(__dirname, 'user_credentials.enc');
+const MASTER_SECRET_KEY_FILE = path.join(__dirname, 'encryption.secret.key');
 
 const ALGORITHM = 'aes-256-cbc'; // 加密算法
 const IV_LENGTH = 16; // 初始化向量長度
 
-let serverJsProcess = null; // 用於存儲主應用 (server.js) 的子進程對象
+let serverJsProcess = null; // 主應用 (server.js) 的子進程對象
 let isShuttingDown = false; // 標記是否正在優雅關閉
 
 // --- 1a. 獲取或生成主加密密鑰文本 ---
@@ -27,13 +30,13 @@ function initializeEncryptionSecretKeyText() {
     if (fs.existsSync(MASTER_SECRET_KEY_FILE)) {
         console.log(`[AUTH_GATE] 應用提示：正在從 ${MASTER_SECRET_KEY_FILE} 讀取主加密密鑰...`);
         const keyText = fs.readFileSync(MASTER_SECRET_KEY_FILE, 'utf8').trim();
-        if (keyText.length < 64) { // 建議密鑰長度
+        if (keyText.length < 64) { // 建議的最小密鑰文本長度
             console.warn(`[AUTH_GATE] 安全警告：${MASTER_SECRET_KEY_FILE} 中的密鑰文本長度 (${keyText.length}) 可能不足。建議使用更長的密鑰。`);
         }
         return keyText;
     } else {
         console.log(`[AUTH_GATE] 應用提示：主加密密鑰文件 ${MASTER_SECRET_KEY_FILE} 不存在。正在生成新密鑰...`);
-        const newKeyText = crypto.randomBytes(48).toString('hex'); // 生成一個96個字符的十六進制字符串作為密鑰文本
+        const newKeyText = crypto.randomBytes(48).toString('hex'); // 生成一個96個字符的十六進制字符串
         try {
             fs.writeFileSync(MASTER_SECRET_KEY_FILE, newKeyText, { encoding: 'utf8', mode: 0o600 }); // 以安全權限寫入文件
             fs.chmodSync(MASTER_SECRET_KEY_FILE, 0o600); // 再次確保文件權限
@@ -49,7 +52,8 @@ function initializeEncryptionSecretKeyText() {
 
 const ENCRYPTION_SECRET_KEY_TEXT = initializeEncryptionSecretKeyText();
 // 使用 scrypt 從密鑰文本派生實際的加密密鑰，增加破解難度
-const DERIVED_ENCRYPTION_KEY = crypto.scryptSync(ENCRYPTION_SECRET_KEY_TEXT, 'a_fixed_salt_for_scrypt_derivation_v1_auth_gate', 32); // 鹽值最好是隨機生成並存儲，此處為簡化示例使用固定值
+// 'a_fixed_salt_for_scrypt_derivation_v1_auth_gate' 是一個固定的鹽值，實際應用中最好使用隨機生成並存儲的鹽值
+const DERIVED_ENCRYPTION_KEY = crypto.scryptSync(ENCRYPTION_SECRET_KEY_TEXT, 'a_fixed_salt_for_scrypt_derivation_v1_auth_gate', 32);
 
 let isMasterPasswordSetupNeeded = !fs.existsSync(MASTER_PASSWORD_STORAGE_FILE); // 檢查主密碼是否已設置
 
@@ -67,8 +71,12 @@ function startMainApp() {
         return;
     }
 
-    // 將主應用需要監聽的端口作為環境變量傳遞
-    const mainAppEnv = { ...process.env, PORT: APP_INTERNAL_PORT.toString(), NOTEPAD_PORT: APP_INTERNAL_PORT.toString() }; // NOTEPAD_PORT 用於兼容 server.js 可能使用的舊名稱
+    // **重要：將 APP_INTERNAL_PORT 作為環境變量 PORT 和 NOTEPAD_PORT 傳遞給子進程**
+    const mainAppEnv = {
+        ...process.env, // 繼承當前進程的環境變量
+        PORT: APP_INTERNAL_PORT.toString(),
+        NOTEPAD_PORT: APP_INTERNAL_PORT.toString() // 為了兼容 server.js 可能使用的舊名稱
+    };
     const options = { stdio: 'inherit', env: mainAppEnv }; // stdio: 'inherit' 使子進程的輸出直接顯示在父進程的控制台
 
     serverJsProcess = spawn(process.execPath, [mainAppPath], options); // 使用 process.execPath (通常是 node) 啟動子進程
@@ -92,7 +100,7 @@ function startMainApp() {
     if (serverJsProcess && serverJsProcess.pid) {
         console.log(`[AUTH_GATE] 主應用 (server.js) 進程已啟動，PID: ${serverJsProcess.pid}，監聽內部端口 ${APP_INTERNAL_PORT}`);
     } else {
-        console.error(`[AUTH_GATE] 主應用 (server.js) 未能立即獲取PID，可能啟動失敗。請檢查 ${mainAppPath} 是否可執行以及是否有錯誤輸出。`);
+        console.error(`[AUTH_GATE] 主應用 (server.js) 未能立即獲取PID，可能啟動失敗。`);
         serverJsProcess = null;
     }
 }
@@ -104,7 +112,7 @@ function encryptUserPassword(text) {
         const cipher = crypto.createCipheriv(ALGORITHM, DERIVED_ENCRYPTION_KEY, iv); // 創建加密器
         let encrypted = cipher.update(text, 'utf8', 'hex'); // 加密文本
         encrypted += cipher.final('hex'); // 完成加密
-        return iv.toString('hex') + ':' + encrypted; // 將IV和密文合併返回
+        return iv.toString('hex') + ':' + encrypted; // 將IV和密文合併返回 (IV在前，用:分隔)
     } catch (error) {
         console.error("[AUTH_GATE] 數據加密函數內部錯誤:", error);
         throw new Error("數據加密失敗。");
@@ -119,23 +127,22 @@ function decryptUserPassword(text) {
             return null;
         }
         const iv = Buffer.from(parts.shift(), 'hex'); // 從十六進制還原IV
-        const encryptedText = parts.join(':'); // 獲取密文部分
+        const encryptedText = parts.join(':'); // 獲取密文部分 (即使原始文本包含':', 也能正確處理)
         const decipher = crypto.createDecipheriv(ALGORITHM, DERIVED_ENCRYPTION_KEY, iv); // 創建解密器
         let decrypted = decipher.update(encryptedText, 'hex', 'utf8'); // 解密文本
         decrypted += decipher.final('utf8'); // 完成解密
         return decrypted;
     } catch (error) {
-        // 常見錯誤如 "Error: Invalid IV length" 或 "Error: error:06065064:digital envelope routines:EVP_DecryptFinal_ex:bad decrypt"
+        // 常見錯誤如 "Error: Invalid IV length" (IV長度不對) 或 "Error: error:06065064:digital envelope routines:EVP_DecryptFinal_ex:bad decrypt" (解密失敗，可能是密鑰錯誤或數據損壞)
         console.error("[AUTH_GATE] 數據解密函數內部錯誤:", error.message);
         return null;
     }
 }
 
-// 用戶憑證（用於多用戶）在此簡化的僅管理員設置中未使用
-// 但保留函數以備將來擴展。
+// 用戶憑證管理函數 (目前主要用於主密碼，但保留了多用戶結構的潛力)
 function readUserCredentials() {
     if (!fs.existsSync(USER_CREDENTIALS_STORAGE_FILE)) {
-        return {}; // 如果文件不存在，返回空對象
+        return {}; // 如果用戶憑證文件不存在，返回空對象
     }
     try {
         const encryptedData = fs.readFileSync(USER_CREDENTIALS_STORAGE_FILE, 'utf8');
@@ -143,36 +150,37 @@ function readUserCredentials() {
         const decryptedData = decryptUserPassword(encryptedData);
         if (decryptedData === null) { // 如果解密失敗
             console.error("[AUTH_GATE] 無法解密用戶憑證文件。文件可能已損壞或加密密鑰已更改。");
-            return {};
+            return {}; // 返回空對象以避免程序崩潰
         }
-        return JSON.parse(decryptedData);
+        return JSON.parse(decryptedData); // 解析解密後的JSON數據
     } catch (error) {
         console.error("[AUTH_GATE] 讀取或解析用戶憑證失敗:", error);
-        return {};
+        return {}; // 出錯時返回空對象
     }
 }
 
 function saveUserCredentials(usersObject) {
     try {
-        const dataToEncrypt = JSON.stringify(usersObject, null, 2); // 格式化JSON以便閱讀
-        const encryptedData = encryptUserPassword(dataToEncrypt);
-        fs.writeFileSync(USER_CREDENTIALS_STORAGE_FILE, encryptedData, 'utf8');
+        const dataToEncrypt = JSON.stringify(usersObject, null, 2); // 將用戶對象序列化為JSON字符串，null, 2 用於格式化輸出
+        const encryptedData = encryptUserPassword(dataToEncrypt); // 加密JSON字符串
+        fs.writeFileSync(USER_CREDENTIALS_STORAGE_FILE, encryptedData, 'utf8'); // 將加密數據寫入文件
     } catch (error) {
         console.error("[AUTH_GATE] 保存用戶憑證失敗:", error);
         throw new Error("保存用戶憑證失敗。");
     }
 }
 
+
 // --- 3. Express 應用設置 ---
 const app = express();
-app.use(bodyParser.urlencoded({ extended: true })); // 解析 URL 編碼的請求體
-app.use(cookieParser()); // 解析 cookie
+app.use(bodyParser.urlencoded({ extended: true })); // 解析 URL 編碼的請求體 (例如 from 表單)
+app.use(cookieParser()); // 解析請求中的 cookie
 
-// 頁面樣式 (與主應用保持一致)
+// 頁面樣式 (與主應用保持一致，以便認證相關頁面風格統一)
 const pageStyles = `
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; background-color: #f8f9fa; display: flex; flex-direction: column; justify-content: center; align-items: center; min-height: 100vh; margin: 0; color: #212529; padding: 20px 0; box-sizing: border-box; }
     .container { background-color: #fff; padding: 30px 40px; border-radius: 0.25rem; box-shadow: 0 1px 3px rgba(0,0,0,0.05); border: 1px solid rgba(0,0,0,0.125); text-align: center; width: 400px; max-width: 90%; margin-bottom: 20px; }
-    .admin-container { width: 800px; max-width: 95%; text-align: left; }
+    .admin-container { width: 800px; max-width: 95%; text-align: left; } /* 管理頁面容器可以更寬 */
     h2 { margin-top: 0; margin-bottom: 25px; color: #212529; font-size: 1.75rem; font-weight: 500; }
     h3 { margin-top: 30px; margin-bottom: 15px; color: #212529; font-size: 1.25rem; border-bottom: 1px solid #dee2e6; padding-bottom: 8px; font-weight: 500; }
     input[type="password"], input[type="text"] { width: 100%; padding: 0.5rem 0.75rem; margin-bottom: 1rem; border: 1px solid #ced4da; border-radius: 0.25rem; box-sizing: border-box; font-size: 1rem; line-height: 1.5; color: #495057; background-color: #fff; background-clip: padding-box; transition: border-color 0.15s ease-in-out, box-shadow 0.15s ease-in-out; }
@@ -219,10 +227,11 @@ app.use((req, res, next) => {
     const authPaths = ['/login', '/do_login', '/setup', '/do_setup']; // 認證相關路徑
     const adminPath = '/admin'; // 管理後台路徑前綴
 
-    // 檢查是否為靜態資源路徑
+    // 檢查是否為靜態資源路徑 (例如 /css/style.css, /uploads/articles/...)
+    // 這些請求應該由後面的代理或 express.static 處理，不應被此中間件攔截重定向
     const isStaticAsset = req.path.startsWith('/css/') || req.path.startsWith('/js/') || req.path.startsWith('/uploads/');
     if (isStaticAsset) {
-        return next(); // 靜態資源直接通過，由後面的代理或 express.static 處理
+        return next();
     }
 
     const isAuthPath = authPaths.includes(req.path);
@@ -241,7 +250,7 @@ app.use((req, res, next) => {
         if (req.cookies.auth === '1' && req.cookies.is_master === 'true') {
             return next(); // 已認證主用戶，允許訪問管理區
         }
-        // 未認證或非主用戶嘗試訪問管理區，重定向到登錄頁（或顯示403）
+        // 未認證或非主用戶嘗試訪問管理區，重定向到登錄頁
         console.warn(`[AUTH_GATE] 未授權用戶嘗試訪問管理頁面: ${req.path}. Cookies: auth=${req.cookies.auth}, is_master=${req.cookies.is_master}`);
         return res.redirect(`/login?returnTo=${encodeURIComponent(req.originalUrl)}`); // 帶上返回地址以便登錄後跳轉
     }
@@ -306,8 +315,8 @@ app.post('/do_setup', (req, res) => {
     }
 
     try {
-        const encryptedPassword = encryptUserPassword(newPassword);
-        fs.writeFileSync(MASTER_PASSWORD_STORAGE_FILE, encryptedPassword, 'utf8');
+        const encryptedPassword = encryptUserPassword(newPassword); // 加密新密碼
+        fs.writeFileSync(MASTER_PASSWORD_STORAGE_FILE, encryptedPassword, 'utf8'); // 保存到文件
         isMasterPasswordSetupNeeded = false; // 標記主密碼已設置
         console.log("[AUTH_GATE] 主密碼已成功設置並加密保存。");
         if (!fs.existsSync(USER_CREDENTIALS_STORAGE_FILE)) { // 初始化用戶憑證文件（如果不存在）
@@ -335,6 +344,8 @@ app.get('/login', (req, res) => {
     if (req.cookies.auth === '1' && req.cookies.is_master === 'true') {
         return res.redirect(req.query.returnTo || '/admin');
     }
+    // 對於此設置，非主管理員登錄不由網關直接處理。
+    // 如果公共用戶需要登錄，那將是主應用程序的一部分。
 
     const error = req.query.error;
     const info = req.query.info;
@@ -407,6 +418,7 @@ app.get('/logout', (req, res) => {
     res.redirect('/login?info=logged_out'); // 重定向到登錄頁並提示已登出
 });
 
+
 // --- 7. 反向代理中間件 ---
 const proxyToMainApp = createProxyMiddleware({
     target: `http://localhost:${APP_INTERNAL_PORT}`, // 代理目標：主應用程序
@@ -450,11 +462,11 @@ const proxyToMainApp = createProxyMiddleware({
 app.use((req, res, next) => {
     const authRelatedPaths = ['/login', '/do_login', '/setup', '/do_setup', '/logout'];
     // 如果請求不是由上面的認證路由處理的，則代理到主應用
+    // 並且確保不是 /admin 路徑（因為 /admin 的代理邏輯已包含在下面）
     if (!authRelatedPaths.includes(req.path) && !req.path.startsWith('/admin')) {
         return proxyToMainApp(req, res, next);
     }
-    // 如果是 /admin 路徑，並且已通过全局中间件的认证检查，也应该被代理
-    // （注意：全局中間件已經處理了 /admin 的訪問控制，這裡確保它被代理）
+    // 如果是 /admin 路徑，並且已通过全局中间件的认证检查 (cookie 中 is_master 為 true)，也应该被代理
     if (req.path.startsWith('/admin') && req.cookies.auth === '1' && req.cookies.is_master === 'true') {
         return proxyToMainApp(req, res, next);
     }
