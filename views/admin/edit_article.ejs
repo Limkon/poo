@@ -1,0 +1,98 @@
+<%- include('../partials/header', { pageTitle: '後台管理 - 編輯分享: ' + article.title, error: typeof error !== 'undefined' ? error : null, success: typeof success !== 'undefined' ? success : null }) %>
+
+<h2>編輯分享: <%= article.title %></h2>
+
+<form action="/admin/edit/<%= article.id %>" method="POST" enctype="multipart/form-data" id="article-form" class="article-edit-form">
+    <div class="form-group">
+        <label for="title">標題:</label>
+        <input type="text" id="title" name="title" value="<%= article.title %>" required>
+    </div>
+
+    <div class="form-group">
+        <label for="category">分類:</label>
+        <select id="category" name="category" required>
+            <% if (typeof categories !== 'undefined' && categories.length > 0) { %>
+                <% categories.forEach(cat => { %>
+                    <option value="<%= cat %>" <%= (article.category === cat) ? 'selected' : '' %>><%= cat %></option>
+                <% }); %>
+            <% } %>
+        </select>
+    </div>
+
+    <div class="form-group">
+        <label for="editor-container">內容 (支持富文本):</label>
+        <div id="editor-container" class="quill-editor">
+            <%- article.content %> </div>
+        <input type="hidden" name="content" id="quill-content">
+    </div>
+
+    <div class="form-group">
+        <h4>當前附件:</h4>
+        <% if (article.attachments && article.attachments.length > 0) { %>
+            <ul class="current-attachments-list">
+                <% article.attachments.forEach(att => { %>
+                    <li>
+                        <a href="<%= att.path %>" target="_blank" title="下載/預覽 <%= att.originalname %>"><%= att.originalname %></a>
+                        (<%= (att.size / 1024).toFixed(1) %> KB)
+                        <form action="/admin/attachments/delete/<%= article.id %>/<%= att.filename %>" method="POST" style="display: inline; margin-left: 10px;" onsubmit="return confirm('確定要刪除附件《<%= att.originalname %>》嗎？');">
+                             <button type="submit" class="btn btn-xs btn-danger">刪除</button>
+                        </form>
+                    </li>
+                <% }); %>
+            </ul>
+        <% } else { %>
+            <p>目前沒有附件。</p>
+        <% } %>
+    </div>
+
+    <div class="form-group">
+        <label for="new_attachments">添加新附件 (可多選, 每個最大25MB):</label>
+        <input type="file" id="new_attachments" name="new_attachments" multiple>
+        <small class="form-text text-muted">提示：選擇文件以上傳新的附件。如果不想更改或添加附件，請留空此欄位。</small>
+    </div>
+    
+    <input type="hidden" name="articleIdForUpload" value="<%= article.id %>">
+
+    <div class="form-actions">
+        <button type="submit" class="btn btn-success">更新分享</button>
+        <a href="/admin" class="btn btn-secondary">取消</a>
+    </div>
+</form>
+
+<script>
+    // Quill 編輯器初始化腳本
+    document.addEventListener('DOMContentLoaded', function () {
+        const editorContainer = document.getElementById('editor-container');
+        if (editorContainer) {
+            const quill = new Quill('#editor-container', {
+                theme: 'snow',
+                modules: {
+                    toolbar: [
+                        [{ 'header': [1, 2, 3, false] }],
+                        ['bold', 'italic', 'underline', 'strike'],
+                        ['link'],
+                        [{ 'list': 'ordered'}, { 'list': 'bullet' }, { 'list': 'check' }],
+                        [{ 'indent': '-1'}, { 'indent': '+1' }],
+                        [{ 'color': [] }, { 'background': [] }],
+                        [{ 'align': [] }],
+                        ['blockquote', 'code-block'],
+                        ['image', 'video'],
+                        ['clean']
+                    ]
+                },
+                placeholder: '在此輸入分享內容...'
+            });
+
+            // 在表單提交前，將 Quill 編輯器的內容同步到隱藏的 input 欄位
+            const articleForm = document.getElementById('article-form');
+            const quillContentInput = document.getElementById('quill-content');
+             if (articleForm && quillContentInput) {
+                articleForm.addEventListener('submit', function() {
+                    quillContentInput.value = quill.root.innerHTML;
+                });
+            }
+        }
+    });
+</script>
+
+<%- include('../partials/footer') %>
