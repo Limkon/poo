@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html lang="zh-CN"> <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"> <title><%= pageTitle || '網絡分享站' %></title> <link href="https://cdn.jsdelivr.net/npm/quill@2.0.0-rc.2/dist/quill.snow.css" rel="stylesheet">
+
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+    <header class="navbar"> <div class="container nav-container"> <h1><a href="/">網絡分享站</a></h1> <nav>
+                <a href="/admin" class="btn btn-outline">後台管理</a> </nav>
+        </div>
+    </header>
+    <main class="container main-content"> <% if (typeof success !== 'undefined' && success && success.length > 0) { %>
+            <div class="message success-message"><%= success %></div>
+        <% } %>
+        <% if (typeof error !== 'undefined' && error && error.length > 0) { %>
+            <div class="message error-message"><%= error %></div>
+        <% } %>
