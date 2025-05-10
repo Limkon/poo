@@ -1,0 +1,40 @@
+<%- include('../partials/header', { pageTitle: '後台管理 - 文章列表', success: typeof success !== 'undefined' ? success : null, error: typeof error !== 'undefined' ? error : null }) %>
+
+<section class="page-header admin-header">
+    <h2>管理分享內容</h2>
+    <a href="/admin/new" class="btn btn-success">創建新分享</a>
+</section>
+
+<% if (typeof articles !== 'undefined' && articles.length > 0) { %>
+    <table class="admin-table">
+        <thead>
+            <tr>
+                <th>標題</th>
+                <th>分類</th>
+                <th>附件數</th>
+                <th>最後更新</th>
+                <th>操作</th>
+            </tr>
+        </thead>
+        <tbody>
+            <% articles.forEach(article => { %>
+                <tr>
+                    <td><a href="/articles/<%= article.id %>" target="_blank" title="預覽文章 - <%= article.title %>"><%= article.title %></a></td>
+                    <td><%= article.category %></td>
+                    <td><%= article.attachments ? article.attachments.length : 0 %></td>
+                    <td><%= new Date(article.updatedAt).toLocaleString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) %></td>
+                    <td class="actions">
+                        <a href="/admin/edit/<%= article.id %>" class="btn btn-sm btn-warning">編輯</a>
+                        <form action="/admin/delete/<%= article.id %>" method="POST" style="display: inline;" onsubmit="return confirm('確定要永久刪除文章《<%= article.title %>》及其所有附件嗎？此操作不可撤銷！');">
+                            <input type="hidden" name="_method" value="POST"> <button type="submit" class="btn btn-sm btn-danger">刪除</button>
+                        </form>
+                    </td>
+                </tr>
+            <% }); %>
+        </tbody>
+    </table>
+<% } else { %>
+    <p class="empty-message">還沒有任何分享內容。 <a href="/admin/new">創建一個吧！</a></p>
+<% } %>
+
+<%- include('../partials/footer') %>
