@@ -1,0 +1,35 @@
+{
+  "name": "network-sharing-site",
+  "version": "1.0.0",
+  "description": "一個帶有本地文件存儲和後台管理的網絡分享網站",
+  "main": "start.cjs",
+  "type": "module",
+  "scripts": {
+    "start": "node start.cjs",
+    "dev": "nodemon start.cjs"
+  },
+  "keywords": [
+    "sharing",
+    "nodejs",
+    "localstorage",
+    "admin",
+    "auth",
+    "proxy"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "ejs": "^3.1.10",
+    "express": "^4.19.2",
+    "method-override": "^3.0.0",
+    "multer": "^1.4.5-lts.1",
+    "uuid": "^9.0.1",
+    "body-parser": "^1.20.2",
+    "cookie-parser": "^1.4.6",
+    "http-proxy-middleware": "^2.0.6"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.3"
+  }
+}
