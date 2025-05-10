@@ -1,4 +1,4 @@
-// start.cjs (認證網關和反向代理 - 澄清權限)
+// start.cjs (認證網關和反向代理 - 修正權限和404問題)
 require('dotenv').config(); // 在檔案頂部載入 .env 檔案
 
 const express = require('express');
@@ -218,20 +218,20 @@ if (isMasterPasswordSetupNeeded) {
 // --- 5. 全局身份驗證和路由邏輯中介軟體 ---
 app.use((req, res, next) => {
     const authPaths = ['/login', '/do_login', '/setup', '/do_setup', '/logout'];
-    const gatewayUserAdminBasePath = '/user-admin'; // **修改：網關的使用者管理基礎路徑**
+    const gatewayUserAdminBasePath = '/user-admin'; // 網關的使用者管理基礎路徑
     const mainAppAdminBasePath = '/admin'; // 主應用的管理基礎路徑 (例如文章管理)
 
     const staticAssetPath = req.path.startsWith('/css/') || req.path.startsWith('/js/') || req.path.startsWith('/uploads/');
 
-    if (staticAssetPath) {
+    if (staticAssetPath) { // 靜態資源直接通過，它們將被代理到主應用或由主應用直接提供
         return next();
     }
 
-    if (isMasterPasswordSetupNeeded) {
+    if (isMasterPasswordSetupNeeded) { // 如果主密碼未設置
         if (req.path === '/setup' || req.path === '/do_setup') {
-            return next();
+            return next(); // 允許訪問設置頁面
         }
-        return res.redirect('/setup');
+        return res.redirect('/setup'); // 其他請求重定向到設置頁面
     }
 
     // 如果請求的是網關自己處理的使用者管理路徑
@@ -244,7 +244,6 @@ app.use((req, res, next) => {
     if (req.path.startsWith(mainAppAdminBasePath)) {
         if (req.cookies.auth === '1') { // 任何已登入的使用者 (主管理員或普通使用者)
             // 允許請求繼續，它將被代理到主應用程式
-            // 主應用程式 (server.js / routes/articles.js) 應自行處理其 /admin/* 路徑的內部權限
             return next();
         } else {
             // 未登入，嘗試存取主應用的管理路徑
@@ -260,14 +259,15 @@ app.use((req, res, next) => {
                 return res.redirect(gatewayUserAdminBasePath); // 主管理員重定向到使用者管理儀表板
             } else {
                  // 普通使用者如果已登入，且嘗試訪問 /login，則重定向到他們應有的目標頁面
-                const returnToTarget = req.query.returnTo && !req.query.returnTo.startsWith(gatewayUserAdminBasePath) ? req.query.returnTo : '/';
+                // 如果有 returnTo 且不是指向網關的使用者管理頁面，則跳轉到 returnTo，否則到主應用的文章管理頁面
+                const returnToTarget = req.query.returnTo && !req.query.returnTo.startsWith(gatewayUserAdminBasePath) ? req.query.returnTo : '/admin/articles';
                 return res.redirect(returnToTarget);
             }
         }
         return next(); // 未登入，允許訪問認證路徑
     }
 
-    // 對於所有其他路徑 (例如公開的文章列表、文章詳情等)，允許請求繼續，它們將被代理
+    // 對於所有其他公開路徑 (例如 '/', '/articles/:id')，允許請求繼續，它們將被代理
     return next();
 });
 
@@ -283,7 +283,9 @@ app.get('/setup', (req, res) => {
     let errorMessageHtml = '';
     if (error === 'mismatch') errorMessageHtml = '<p class="message error-message">兩次輸入的密碼不匹配！</p>';
     else if (error === 'short') errorMessageHtml = '<p class="message error-message">主密碼長度至少需要8個字符！</p>';
-    // ... (其他錯誤消息)
+    else if (error === 'write_failed') errorMessageHtml = '<p class="message error-message">保存主密碼失敗，請檢查服務器權限或日誌。</p>';
+    else if (error === 'encrypt_failed') errorMessageHtml = '<p class="message error-message">主密碼加密失敗，請檢查服務器日誌。</p>';
+
     res.send(`
         <!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>設置初始主密碼</title><style>${pageStyles}</style></head>
         <body><div class="container">
@@ -342,9 +344,13 @@ app.post('/do_setup', (req, res) => {
 app.get('/login', (req, res) => {
     if (req.cookies.auth === '1') {
         if (req.cookies.is_master === 'true') {
+            // 如果 returnTo 指向 /user-admin 或其子路徑，則跳轉到 returnTo，否則到 /user-admin
             return res.redirect(req.query.returnTo && req.query.returnTo.startsWith('/user-admin') ? req.query.returnTo : '/user-admin');
         } else {
-            const returnToTarget = req.query.returnTo && !req.query.returnTo.startsWith('/user-admin') ? req.query.returnTo : '/';
+            // 普通使用者如果已登入，且嘗試訪問 /login
+            // 如果 returnTo 存在且不是指向網關的使用者管理頁面，則跳轉到 returnTo
+            // 否則跳轉到主應用的文章管理頁面
+            const returnToTarget = req.query.returnTo && !req.query.returnTo.startsWith('/user-admin') ? req.query.returnTo : '/admin/articles';
             return res.redirect(returnToTarget);
         }
     }
@@ -354,7 +360,10 @@ app.get('/login', (req, res) => {
     let messageHtml = '';
     if (error === 'invalid') messageHtml = '<p class="message error-message">用戶名或密碼錯誤！</p>';
     else if (error === 'decrypt_failed') messageHtml = '<p class="message error-message">無法驗證密碼。可能是密鑰問題或文件損壞。</p>';
-    // ... (其他錯誤消息)
+    else if (error === 'read_failed') messageHtml = '<p class="message error-message">無法讀取密碼配置。請聯繫管理員。</p>';
+    else if (error === 'no_user_file') messageHtml = '<p class="message error-message">用戶憑證文件不存在或無法讀取。</p>';
+    else if (error === 'master_not_set') messageHtml = `<p class="message error-message">主密碼尚未設置，請先 <a href="/setup">設置主密碼</a>。</p>`;
+    else if (info === 'logged_out') messageHtml = '<p class="message success-message">您已成功登出。</p>';
     if (req.query.returnTo) messageHtml += `<p class="message info-message">登錄後將返回到: ${decodeURIComponent(req.query.returnTo)}</p>`;
 
     res.send(`
@@ -403,7 +412,7 @@ app.post('/do_login', (req, res) => {
                 res.cookie('auth', '1', { maxAge: cookieMaxAge, httpOnly: true, path: '/', sameSite: 'Lax' });
                 res.cookie('is_master', 'true', { maxAge: cookieMaxAge, httpOnly: true, path: '/', sameSite: 'Lax' });
                 console.log("[AUTH_GATE] 主密碼登錄成功。");
-                // **修改：主管理員登入後重定向到 /user-admin**
+                // 主管理員登入後重定向到 /user-admin 或 returnTo (如果 returnTo 是 /user-admin/*)
                 return res.redirect(returnToUrl && returnToUrl.startsWith('/user-admin') ? returnToUrl : '/user-admin');
             } else {
                 return res.redirect(`/login?error=invalid${returnToUrl ? '&returnTo=' + encodeURIComponent(returnToUrl) : ''}`);
@@ -435,11 +444,12 @@ app.post('/do_login', (req, res) => {
                 res.cookie('auth', '1', { maxAge: cookieMaxAge, httpOnly: true, path: '/', sameSite: 'Lax' });
                 res.cookie('is_master', 'false', { maxAge: cookieMaxAge, httpOnly: true, path: '/', sameSite: 'Lax' });
                 console.log(`[AUTH_GATE] 用戶 '${username}' 登錄成功。`);
-                // **修改：普通使用者登入後，如果 returnToUrl 指向網關的使用者管理頁面，則重定向到首頁，否則到 returnToUrl 或 /admin/articles (假設這是文章管理入口)**
+                // 普通使用者登入後，如果 returnToUrl 指向網關的使用者管理頁面，則重定向到文章管理，否則到 returnToUrl 或文章管理
                 let redirectTarget = returnToUrl || '/admin/articles'; // 默認跳轉到文章管理
                 if (returnToUrl && returnToUrl.startsWith('/user-admin')) {
                     redirectTarget = '/admin/articles'; // 普通用戶不應跳轉到網關的使用者管理頁, 改為文章管理
-                } else if (returnToUrl === '/admin') { // 如果 returnTo 是籠統的 /admin，也跳轉到文章管理
+                } else if (returnToUrl === '/admin' && !returnToUrl.startsWith('/admin/articles')) {
+                    // 如果 returnTo 是籠統的 /admin (且不是 /admin/articles)，也明確跳轉到文章管理
                     redirectTarget = '/admin/articles';
                 }
                 return res.redirect(redirectTarget);
@@ -463,7 +473,6 @@ app.get('/logout', (req, res) => {
 
 
 // == USER ADMIN ROUTES (Handled by Gateway, for Master Admin only) ==
-// **修改：基礎路徑改為 /user-admin**
 const userAdminRouter = express.Router(); // 創建一個新的路由器實例
 
 // 中介軟體，確保只有主管理員才能訪問後面的使用者管理路由
@@ -491,11 +500,10 @@ userAdminRouter.get('/', ensureMasterAdmin, (req, res) => {
     if (error === 'user_exists') messageHtml = '<p class="message error-message">錯誤：用戶名已存在。</p>';
     else if (error === 'password_mismatch') messageHtml = '<p class="message error-message">錯誤：兩次輸入的密碼不匹配。</p>';
     else if (error === 'missing_fields') messageHtml = '<p class="message error-message">錯誤：所有必填字段均不能为空。</p>';
-    else if (error === 'password_empty') messageHtml = '<p class="message error-message">錯誤：普通用戶密碼不能為空。</p>'; // 新增
+    else if (error === 'password_empty') messageHtml = '<p class="message error-message">錯誤：普通用戶密碼不能為空。</p>';
     else if (error === 'unknown') messageHtml = '<p class="message error-message">發生未知錯誤。</p>';
     else if (error === 'user_not_found') messageHtml = '<p class="message error-message">錯誤: 未找到指定用戶。</p>';
     else if (error === 'invalid_username') messageHtml = '<p class="message error-message">錯誤: 用戶名不能是 "master" 或包含非法字符，且長度至少3位。</p>';
-
 
     if (success === 'user_added') messageHtml = '<p class="message success-message">用戶添加成功。</p>';
     else if (success === 'user_deleted') messageHtml = '<p class="message success-message">用戶刪除成功。</p>';
@@ -563,12 +571,12 @@ userAdminRouter.get('/', ensureMasterAdmin, (req, res) => {
     `);
 });
 
-userAdminRouter.post('/add', ensureMasterAdmin, (req, res) => { // **修改：路徑改為 /add**
+userAdminRouter.post('/add', ensureMasterAdmin, (req, res) => {
     const { newUsername, newUserPassword, confirmNewUserPassword } = req.body;
     if (!newUsername || !newUserPassword || !confirmNewUserPassword ) {
         return res.redirect('/user-admin?error=missing_fields');
     }
-    if (newUserPassword.trim() === '') { // **修改：普通用戶密碼不能為空**
+    if (newUserPassword.trim() === '') {
         return res.redirect('/user-admin?error=password_empty');
     }
     if (newUserPassword !== confirmNewUserPassword) {
@@ -594,7 +602,7 @@ userAdminRouter.post('/add', ensureMasterAdmin, (req, res) => { // **修改：�
     }
 });
 
-userAdminRouter.post('/delete', ensureMasterAdmin, (req, res) => { // **修改：路徑改為 /delete**
+userAdminRouter.post('/delete', ensureMasterAdmin, (req, res) => {
     const { usernameToDelete } = req.body;
     if (!usernameToDelete) {
         return res.redirect('/user-admin?error=unknown');
@@ -614,13 +622,13 @@ userAdminRouter.post('/delete', ensureMasterAdmin, (req, res) => { // **修改�
     }
 });
 
-userAdminRouter.post('/change-password-page', ensureMasterAdmin, (req, res) => { // **修改：路徑**
+userAdminRouter.post('/change-password-page', ensureMasterAdmin, (req, res) => {
     const { usernameToChange } = req.body;
     const error = req.query.error;
     let errorMessageHtml = '';
     if (error === 'mismatch') errorMessageHtml = '<p class="message error-message">兩次輸入的密碼不匹配！</p>';
     else if (error === 'missing_fields') errorMessageHtml = '<p class="message error-message">錯誤：所有密碼字段均為必填項。</p>';
-    else if (error === 'password_empty') errorMessageHtml = '<p class="message error-message">錯誤：新密碼不能為空。</p>'; // 新增
+    else if (error === 'password_empty') errorMessageHtml = '<p class="message error-message">錯誤：新密碼不能為空。</p>';
     else if (error === 'unknown') errorMessageHtml = '<p class="message error-message">發生未知錯誤。</p>';
 
     if (!usernameToChange) return res.redirect('/user-admin?error=unknown');
@@ -653,17 +661,16 @@ userAdminRouter.post('/change-password-page', ensureMasterAdmin, (req, res) => {
     `);
 });
 
-userAdminRouter.post('/perform-change-password', ensureMasterAdmin, (req, res) => { // **修改：路徑**
+userAdminRouter.post('/perform-change-password', ensureMasterAdmin, (req, res) => {
     const { username, newPassword, confirmPassword } = req.body;
-    const redirectUrl = `/user-admin/change-password-page`; // 基礎重定向 URL
+    const redirectUrl = `/user-admin/change-password-page`;
     const queryParams = new URLSearchParams({ usernameToChange: username });
-
 
     if (!username || !newPassword || !confirmPassword) {
         queryParams.append('error', 'missing_fields');
         return res.redirect(`${redirectUrl}?${queryParams.toString()}`);
     }
-    if (newPassword.trim() === '') { // **修改：普通用戶密碼不能為空**
+    if (newPassword.trim() === '') {
         queryParams.append('error', 'password_empty');
         return res.redirect(`${redirectUrl}?${queryParams.toString()}`);
     }
@@ -689,8 +696,7 @@ userAdminRouter.post('/perform-change-password', ensureMasterAdmin, (req, res) =
     }
 });
 
-// **修改：將使用者管理路由掛載到 /user-admin**
-app.use('/user-admin', userAdminRouter);
+app.use('/user-admin', userAdminRouter); // 將使用者管理路由掛載到 /user-admin
 
 
 // --- 7. 反向代理中間件 ---
