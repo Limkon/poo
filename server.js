@@ -17,7 +17,7 @@ const __dirname = path.dirname(__filename); // 獲取當前文件所在的文件
 
 const app = express();
 // 此端口由 start.cjs (APP_INTERNAL_PORT) 通過環境變量 PORT 或 NOTEPAD_PORT (兼容舊名) 設置
-const APP_PORT = process.env.PORT || process.env.NOTEPAD_PORT || 3000;
+const APP_PORT = 3200;// process.env.PORT || process.env.NOTEPAD_PORT ||
 
 // 確保基礎 public/uploads 和 public/uploads/articles 文件夾存在
 // articleStore.js 中的 ensureDir 會處理 data/articles 和 public/uploads/articles
