@@ -15,6 +15,10 @@
 * **本地檔案儲存**：文章資料以 JSON 檔案的形式儲存在伺服器本地，附件也儲存在本地檔案系統中。
 * **響應式設計**：基礎樣式考慮了不同裝置的顯示效果。
 * **富文本編輯**：後台管理使用 Quill.js 進行文章內容的富文本編輯。
+* - 支持[alwaysdata](https://www.alwaysdata.com/en/)空间一键安装，SSH登陆后执行以下命令，安装完成后在alwaysdata空间设置中找到Command*添加node server.js
+     ```bash
+     bash <(curl -fsSL https://raw.githubusercontent.com/Limkon/Netnotes/master/setup.sh)
+     ```
 
 ## 專案檔案結構
 
