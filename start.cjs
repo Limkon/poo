@@ -1,5 +1,5 @@
-// start.cjs (認證網關和反向代理)
-require('dotenv').config(); // **重要：在文件頂部加載 .env 文件**
+// start.cjs (認證網關和反向代理 - 含使用者管理)
+require('dotenv').config(); // 在文件頂部加載 .env 文件
 
 const express = require('express');
 const bodyParser = require('body-parser');
@@ -11,7 +11,6 @@ const crypto = require('crypto');
 const { createProxyMiddleware } = require('http-proxy-middleware');
 
 // --- 1. 配置和常量 ---
-// **修改：優先從 .env 讀取端口，否則使用默認值**
 const PUBLIC_PORT = process.env.PUBLIC_PORT || 8100;
 const APP_INTERNAL_PORT = process.env.APP_INTERNAL_PORT || 3000;
 
@@ -19,43 +18,41 @@ const MASTER_PASSWORD_STORAGE_FILE = path.join(__dirname, 'master_auth_config.en
 const USER_CREDENTIALS_STORAGE_FILE = path.join(__dirname, 'user_credentials.enc');
 const MASTER_SECRET_KEY_FILE = path.join(__dirname, 'encryption.secret.key');
 
-const ALGORITHM = 'aes-256-cbc'; // 加密算法
-const IV_LENGTH = 16; // 初始化向量長度
+const ALGORITHM = 'aes-256-cbc';
+const IV_LENGTH = 16;
 
-let serverJsProcess = null; // 主應用 (server.js) 的子進程對象
-let isShuttingDown = false; // 標記是否正在優雅關閉
+let serverJsProcess = null;
+let isShuttingDown = false;
 
 // --- 1a. 獲取或生成主加密密鑰文本 ---
 function initializeEncryptionSecretKeyText() {
     if (fs.existsSync(MASTER_SECRET_KEY_FILE)) {
         console.log(`[AUTH_GATE] 應用提示：正在從 ${MASTER_SECRET_KEY_FILE} 讀取主加密密鑰...`);
         const keyText = fs.readFileSync(MASTER_SECRET_KEY_FILE, 'utf8').trim();
-        if (keyText.length < 64) { // 建議的最小密鑰文本長度
+        if (keyText.length < 64) {
             console.warn(`[AUTH_GATE] 安全警告：${MASTER_SECRET_KEY_FILE} 中的密鑰文本長度 (${keyText.length}) 可能不足。建議使用更長的密鑰。`);
         }
         return keyText;
     } else {
         console.log(`[AUTH_GATE] 應用提示：主加密密鑰文件 ${MASTER_SECRET_KEY_FILE} 不存在。正在生成新密鑰...`);
-        const newKeyText = crypto.randomBytes(48).toString('hex'); // 生成一個96個字符的十六進制字符串
+        const newKeyText = crypto.randomBytes(48).toString('hex');
         try {
-            fs.writeFileSync(MASTER_SECRET_KEY_FILE, newKeyText, { encoding: 'utf8', mode: 0o600 }); // 以安全權限寫入文件
-            fs.chmodSync(MASTER_SECRET_KEY_FILE, 0o600); // 再次確保文件權限
+            fs.writeFileSync(MASTER_SECRET_KEY_FILE, newKeyText, { encoding: 'utf8', mode: 0o600 });
+            fs.chmodSync(MASTER_SECRET_KEY_FILE, 0o600);
             console.log(`[AUTH_GATE] 應用提示：新的主加密密鑰已生成並保存到 ${MASTER_SECRET_KEY_FILE} (權限 600)。`);
             console.warn(`[AUTH_GATE] 重要：請務必安全備份 ${MASTER_SECRET_KEY_FILE} 文件！刪除此文件將導致所有已加密密碼無法解密。`);
             return newKeyText;
         } catch (err) {
             console.error(`[AUTH_GATE] 嚴重錯誤：無法寫入或設置主加密密鑰文件 ${MASTER_SECRET_KEY_FILE} 的權限。程序將退出。`, err);
-            process.exit(1); // 關鍵錯誤，退出程序
+            process.exit(1);
         }
     }
 }
 
 const ENCRYPTION_SECRET_KEY_TEXT = initializeEncryptionSecretKeyText();
-// 使用 scrypt 從密鑰文本派生實際的加密密鑰，增加破解難度
-// 'a_fixed_salt_for_scrypt_derivation_v1_auth_gate' 是一個固定的鹽值，實際應用中最好使用隨機生成並存儲的鹽值
 const DERIVED_ENCRYPTION_KEY = crypto.scryptSync(ENCRYPTION_SECRET_KEY_TEXT, 'a_fixed_salt_for_scrypt_derivation_v1_auth_gate', 32);
 
-let isMasterPasswordSetupNeeded = !fs.existsSync(MASTER_PASSWORD_STORAGE_FILE); // 檢查主密碼是否已設置
+let isMasterPasswordSetupNeeded = !fs.existsSync(MASTER_PASSWORD_STORAGE_FILE);
 
 // --- 1b. 啟動和管理 server.js (主應用) ---
 function startMainApp() {
@@ -64,22 +61,21 @@ function startMainApp() {
         return;
     }
     console.log(`[AUTH_GATE] 嘗試啟動主應用 (server.js)，該應用應固定監聽端口 ${APP_INTERNAL_PORT}...`);
-    const mainAppPath = path.join(__dirname, 'server.js'); // 假設主應用 server.js 在同一目錄
+    const mainAppPath = path.join(__dirname, 'server.js');
 
     if (!fs.existsSync(mainAppPath)) {
         console.error(`[AUTH_GATE] 嚴重錯誤：主應用文件 ${mainAppPath} 未找到。請確保路徑正確。`);
         return;
     }
 
-    // **重要：將 APP_INTERNAL_PORT 作為環境變量 PORT 和 NOTEPAD_PORT 傳遞給子進程**
     const mainAppEnv = {
-        ...process.env, // 繼承當前進程的環境變量
+        ...process.env,
         PORT: APP_INTERNAL_PORT.toString(),
-        NOTEPAD_PORT: APP_INTERNAL_PORT.toString() // 為了兼容 server.js 可能使用的舊名稱
+        NOTEPAD_PORT: APP_INTERNAL_PORT.toString()
     };
-    const options = { stdio: 'inherit', env: mainAppEnv }; // stdio: 'inherit' 使子進程的輸出直接顯示在父進程的控制台
+    const options = { stdio: 'inherit', env: mainAppEnv };
 
-    serverJsProcess = spawn(process.execPath, [mainAppPath], options); // 使用 process.execPath (通常是 node) 啟動子進程
+    serverJsProcess = spawn(process.execPath, [mainAppPath], options);
 
     serverJsProcess.on('error', (err) => {
         console.error(`[AUTH_GATE] 啟動主應用 (server.js) 失敗: ${err.message}`);
@@ -90,7 +86,6 @@ function startMainApp() {
         const reason = code !== null ? `退出碼 ${code}` : (signal ? `信號 ${signal}` : '未知原因');
         console.log(`[AUTH_GATE] 主應用 (server.js) 已退出 (${reason})。`);
         serverJsProcess = null;
-        // 可選：在主應用意外退出時嘗試重啟 (僅在非關閉且主密碼已設置時)
         if (!isShuttingDown && !isMasterPasswordSetupNeeded) {
             console.log('[AUTH_GATE] 嘗試在5秒後重啟主應用...');
             setTimeout(startMainApp, 5000);
@@ -108,11 +103,11 @@ function startMainApp() {
 // --- 2. 加密與解密函數 ---
 function encryptUserPassword(text) {
     try {
-        const iv = crypto.randomBytes(IV_LENGTH); // 生成隨機初始化向量
-        const cipher = crypto.createCipheriv(ALGORITHM, DERIVED_ENCRYPTION_KEY, iv); // 創建加密器
-        let encrypted = cipher.update(text, 'utf8', 'hex'); // 加密文本
-        encrypted += cipher.final('hex'); // 完成加密
-        return iv.toString('hex') + ':' + encrypted; // 將IV和密文合併返回 (IV在前，用:分隔)
+        const iv = crypto.randomBytes(IV_LENGTH);
+        const cipher = crypto.createCipheriv(ALGORITHM, DERIVED_ENCRYPTION_KEY, iv);
+        let encrypted = cipher.update(text, 'utf8', 'hex');
+        encrypted += cipher.final('hex');
+        return iv.toString('hex') + ':' + encrypted;
     } catch (error) {
         console.error("[AUTH_GATE] 數據加密函數內部錯誤:", error);
         throw new Error("數據加密失敗。");
@@ -121,66 +116,67 @@ function encryptUserPassword(text) {
 
 function decryptUserPassword(text) {
     try {
-        const parts = text.split(':'); // 分離IV和密文
+        const parts = text.split(':');
         if (parts.length !== 2) {
             console.error("[AUTH_GATE] 數據解密失敗：密文格式無效（缺少IV）。");
             return null;
         }
-        const iv = Buffer.from(parts.shift(), 'hex'); // 從十六進制還原IV
-        const encryptedText = parts.join(':'); // 獲取密文部分 (即使原始文本包含':', 也能正確處理)
-        const decipher = crypto.createDecipheriv(ALGORITHM, DERIVED_ENCRYPTION_KEY, iv); // 創建解密器
-        let decrypted = decipher.update(encryptedText, 'hex', 'utf8'); // 解密文本
-        decrypted += decipher.final('utf8'); // 完成解密
+        const iv = Buffer.from(parts.shift(), 'hex');
+        const encryptedText = parts.join(':');
+        const decipher = crypto.createDecipheriv(ALGORITHM, DERIVED_ENCRYPTION_KEY, iv);
+        let decrypted = decipher.update(encryptedText, 'hex', 'utf8');
+        decrypted += decipher.final('utf8');
         return decrypted;
     } catch (error) {
-        // 常見錯誤如 "Error: Invalid IV length" (IV長度不對) 或 "Error: error:06065064:digital envelope routines:EVP_DecryptFinal_ex:bad decrypt" (解密失敗，可能是密鑰錯誤或數據損壞)
         console.error("[AUTH_GATE] 數據解密函數內部錯誤:", error.message);
         return null;
     }
 }
 
-// 用戶憑證管理函數 (目前主要用於主密碼，但保留了多用戶結構的潛力)
+// --- 2b. User Credentials Management ---
 function readUserCredentials() {
     if (!fs.existsSync(USER_CREDENTIALS_STORAGE_FILE)) {
-        return {}; // 如果用戶憑證文件不存在，返回空對象
+        return {};
     }
     try {
         const encryptedData = fs.readFileSync(USER_CREDENTIALS_STORAGE_FILE, 'utf8');
-        if (!encryptedData.trim()) return {}; // 如果文件為空，返回空對象
+        if (!encryptedData.trim()) return {};
         const decryptedData = decryptUserPassword(encryptedData);
-        if (decryptedData === null) { // 如果解密失敗
+        if (decryptedData === null) {
             console.error("[AUTH_GATE] 無法解密用戶憑證文件。文件可能已損壞或加密密鑰已更改。");
-            return {}; // 返回空對象以避免程序崩潰
+            return {};
         }
-        return JSON.parse(decryptedData); // 解析解密後的JSON數據
+        return JSON.parse(decryptedData);
     } catch (error) {
         console.error("[AUTH_GATE] 讀取或解析用戶憑證失敗:", error);
-        return {}; // 出錯時返回空對象
+        if (error instanceof SyntaxError && fs.existsSync(USER_CREDENTIALS_STORAGE_FILE)) {
+            console.warn("[AUTH_GATE] 用戶憑證文件解析JSON失敗，文件可能已損壞。");
+            // 可以考慮在這裡備份損壞的文件並創建一個新的空文件
+        }
+        return {};
     }
 }
 
 function saveUserCredentials(usersObject) {
     try {
-        const dataToEncrypt = JSON.stringify(usersObject, null, 2); // 將用戶對象序列化為JSON字符串，null, 2 用於格式化輸出
-        const encryptedData = encryptUserPassword(dataToEncrypt); // 加密JSON字符串
-        fs.writeFileSync(USER_CREDENTIALS_STORAGE_FILE, encryptedData, 'utf8'); // 將加密數據寫入文件
+        const dataToEncrypt = JSON.stringify(usersObject, null, 2);
+        const encryptedData = encryptUserPassword(dataToEncrypt);
+        fs.writeFileSync(USER_CREDENTIALS_STORAGE_FILE, encryptedData, 'utf8');
     } catch (error) {
         console.error("[AUTH_GATE] 保存用戶憑證失敗:", error);
         throw new Error("保存用戶憑證失敗。");
     }
 }
 
-
 // --- 3. Express 應用設置 ---
 const app = express();
-app.use(bodyParser.urlencoded({ extended: true })); // 解析 URL 編碼的請求體 (例如 from 表單)
-app.use(cookieParser()); // 解析請求中的 cookie
+app.use(bodyParser.urlencoded({ extended: true }));
+app.use(cookieParser());
 
-// 頁面樣式 (與主應用保持一致，以便認證相關頁面風格統一)
 const pageStyles = `
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; background-color: #f8f9fa; display: flex; flex-direction: column; justify-content: center; align-items: center; min-height: 100vh; margin: 0; color: #212529; padding: 20px 0; box-sizing: border-box; }
     .container { background-color: #fff; padding: 30px 40px; border-radius: 0.25rem; box-shadow: 0 1px 3px rgba(0,0,0,0.05); border: 1px solid rgba(0,0,0,0.125); text-align: center; width: 400px; max-width: 90%; margin-bottom: 20px; }
-    .admin-container { width: 800px; max-width: 95%; text-align: left; } /* 管理頁面容器可以更寬 */
+    .admin-container { width: 800px; max-width: 95%; text-align: left; }
     h2 { margin-top: 0; margin-bottom: 25px; color: #212529; font-size: 1.75rem; font-weight: 500; }
     h3 { margin-top: 30px; margin-bottom: 15px; color: #212529; font-size: 1.25rem; border-bottom: 1px solid #dee2e6; padding-bottom: 8px; font-weight: 500; }
     input[type="password"], input[type="text"] { width: 100%; padding: 0.5rem 0.75rem; margin-bottom: 1rem; border: 1px solid #ced4da; border-radius: 0.25rem; box-sizing: border-box; font-size: 1rem; line-height: 1.5; color: #495057; background-color: #fff; background-clip: padding-box; transition: border-color 0.15s ease-in-out, box-shadow 0.15s ease-in-out; }
@@ -222,63 +218,73 @@ if (isMasterPasswordSetupNeeded) {
 
 // --- 5. 全局身份驗證和設置重定向中間件 ---
 app.use((req, res, next) => {
-    // 允許公開訪問的路徑前綴或確切路徑 (例如靜態資源)
-    const publicPaths = ['/', '/articles', '/css', '/js', '/uploads', '/favicon.ico'];
-    const authPaths = ['/login', '/do_login', '/setup', '/do_setup']; // 認證相關路徑
-    const adminPath = '/admin'; // 管理後台路徑前綴
+    const authPaths = ['/login', '/do_login', '/setup', '/do_setup'];
+    const adminUserManagementPath = '/admin'; // 網關自己處理的使用者管理路徑
+    const staticAssetPath = req.path.startsWith('/css/') || req.path.startsWith('/js/') || req.path.startsWith('/uploads/');
 
-    // 檢查是否為靜態資源路徑 (例如 /css/style.css, /uploads/articles/...)
-    // 這些請求應該由後面的代理或 express.static 處理，不應被此中間件攔截重定向
-    const isStaticAsset = req.path.startsWith('/css/') || req.path.startsWith('/js/') || req.path.startsWith('/uploads/');
-    if (isStaticAsset) {
+    if (staticAssetPath) { // 靜態資源直接通過
         return next();
     }
 
-    const isAuthPath = authPaths.includes(req.path);
-    const isAdminArea = req.path.startsWith(adminPath);
-
-    // 如果主密碼尚未設置
     if (isMasterPasswordSetupNeeded) {
-        if (req.path === '/setup' || req.path === '/do_setup') { // 只允許訪問設置頁面
+        if (req.path === '/setup' || req.path === '/do_setup') {
             return next();
         }
-        return res.redirect('/setup'); // 其他所有請求重定向到設置頁面
+        return res.redirect('/setup');
     }
 
-    // 如果請求的是管理區域
-    if (isAdminArea) {
+    // 如果是請求網關的使用者管理區域
+    if (req.path.startsWith(adminUserManagementPath)) {
+        // 檢查是否為主管理員
         if (req.cookies.auth === '1' && req.cookies.is_master === 'true') {
-            return next(); // 已認證主用戶，允許訪問管理區
+            // 如果是 /admin (使用者管理主頁) 或其子路由 (如 /admin/add_user)，由網關處理
+            const gatewayAdminSpecificPaths = [
+                '/admin',
+                '/admin/add_user',
+                '/admin/delete_user',
+                '/admin/change_password_page',
+                '/admin/perform_change_password'
+            ];
+            if (gatewayAdminSpecificPaths.includes(req.path)) {
+                return next(); // 由網關的特定路由處理
+            }
+            // 如果是 /admin/xxx 但不是網關的特定使用者管理路由 (例如 /admin/articles)，則應該代理到主應用
+            // （主應用也應該有自己的 /admin/* 保護機制，或者依賴網關的 is_master cookie）
+            // 這個邏輯會在後面的代理中間件處理
+        } else {
+            // 非主管理員嘗試訪問 /admin (使用者管理)
+            console.warn(`[AUTH_GATE] 未授權使用者嘗試訪問網關管理頁面: ${req.path}. Cookies: auth=${req.cookies.auth}, is_master=${req.cookies.is_master}`);
+            return res.redirect(`/login?returnTo=${encodeURIComponent(req.originalUrl)}`);
         }
-        // 未認證或非主用戶嘗試訪問管理區，重定向到登錄頁
-        console.warn(`[AUTH_GATE] 未授權用戶嘗試訪問管理頁面: ${req.path}. Cookies: auth=${req.cookies.auth}, is_master=${req.cookies.is_master}`);
-        return res.redirect(`/login?returnTo=${encodeURIComponent(req.originalUrl)}`); // 帶上返回地址以便登錄後跳轉
     }
 
-    // 對於非管理區域的請求
-    // 如果是認證相關路徑 (login, setup), 則直接處理
-    if (isAuthPath) {
-        // 如果已登錄主賬戶，訪問登錄頁則重定向到管理頁
-        if (req.path === '/login' && req.cookies.auth === '1' && req.cookies.is_master === 'true') {
-            return res.redirect('/admin');
+    // 處理認證相關路徑
+    if (authPaths.includes(req.path)) {
+        if (req.cookies.auth === '1') { // 如果已登入
+            if (req.cookies.is_master === 'true') { // 主管理員
+                return res.redirect(adminUserManagementPath); // 重定向到使用者管理
+            } else { // 普通使用者
+                return res.redirect('/'); // 重定向到主頁
+            }
         }
-        return next();
+        return next(); // 未登入，允許訪問認證路徑
     }
 
-    // 其他所有路徑 (包括公開路徑和需要代理的路径)
-    // 這個網關現在主要負責 /admin 的認證。其他路徑將由主應用處理（通過代理）。
+    // 其他所有路徑，包括主應用的 /admin/articles 等，都將由後面的代理處理
+    // 如果普通使用者已登入，他們可以訪問代理的內容
+    // 如果未登入，他們也可以訪問代理的公開內容
     return next();
 });
 
 
 // --- 6. 路由定義 ---
 
-// == SETUP MASTER PASSWORD ROUTES == (設置主密碼路由)
+// == SETUP MASTER PASSWORD ROUTES ==
 app.get('/setup', (req, res) => {
-    if (!isMasterPasswordSetupNeeded) { // 如果主密碼已設置，重定向到登錄頁
+    if (!isMasterPasswordSetupNeeded) {
          return res.redirect('/login');
     }
-    const error = req.query.error; // 從查詢參數獲取錯誤信息
+    const error = req.query.error;
     let errorMessageHtml = '';
     if (error === 'mismatch') errorMessageHtml = '<p class="message error-message">兩次輸入的密碼不匹配！</p>';
     else if (error === 'short') errorMessageHtml = '<p class="message error-message">主密碼長度至少需要8個字符！</p>';
@@ -315,14 +321,15 @@ app.post('/do_setup', (req, res) => {
     }
 
     try {
-        const encryptedPassword = encryptUserPassword(newPassword); // 加密新密碼
-        fs.writeFileSync(MASTER_PASSWORD_STORAGE_FILE, encryptedPassword, 'utf8'); // 保存到文件
-        isMasterPasswordSetupNeeded = false; // 標記主密碼已設置
+        const encryptedPassword = encryptUserPassword(newPassword);
+        fs.writeFileSync(MASTER_PASSWORD_STORAGE_FILE, encryptedPassword, 'utf8');
+        isMasterPasswordSetupNeeded = false;
         console.log("[AUTH_GATE] 主密碼已成功設置並加密保存。");
-        if (!fs.existsSync(USER_CREDENTIALS_STORAGE_FILE)) { // 初始化用戶憑證文件（如果不存在）
-            saveUserCredentials({});
+        if (!fs.existsSync(USER_CREDENTIALS_STORAGE_FILE)) {
+            saveUserCredentials({}); // 初始化空的用戶憑證文件
+            console.log("[AUTH_GATE] 空的用戶憑證文件已創建。");
         }
-        startMainApp(); // 主密碼設置成功後啟動主應用
+        startMainApp();
         res.send(`
             <!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><title>設置成功</title><style>${pageStyles}</style></head>
             <body><div class="container">
@@ -338,34 +345,38 @@ app.post('/do_setup', (req, res) => {
     }
 });
 
-// == LOGIN ROUTES (Primarily for Admin) == (主要用於管理員登錄的路由)
+// == LOGIN ROUTES ==
 app.get('/login', (req, res) => {
-    // 如果已作為主管理員登錄，則重定向到管理頁面或指定的返回URL
-    if (req.cookies.auth === '1' && req.cookies.is_master === 'true') {
-        return res.redirect(req.query.returnTo || '/admin');
+    if (req.cookies.auth === '1') { // 如果已登入
+        if (req.cookies.is_master === 'true') {
+            return res.redirect(req.query.returnTo || '/admin'); // 主管理員重定向到 /admin (使用者管理) 或 returnTo
+        } else {
+            return res.redirect('/'); // 普通使用者重定向到主頁
+        }
     }
-    // 對於此設置，非主管理員登錄不由網關直接處理。
-    // 如果公共用戶需要登錄，那將是主應用程序的一部分。
 
     const error = req.query.error;
     const info = req.query.info;
     let messageHtml = '';
-    if (error === 'invalid') messageHtml = '<p class="message error-message">主密碼錯誤！</p>';
+    if (error === 'invalid') messageHtml = '<p class="message error-message">用戶名或密碼錯誤！</p>';
     else if (error === 'decrypt_failed') messageHtml = '<p class="message error-message">無法驗證密碼。可能是密鑰問題或文件損壞。</p>';
+    else if (error === 'read_failed') messageHtml = '<p class="message error-message">無法讀取密碼配置。請聯繫管理員。</p>';
+    else if (error === 'no_user_file') messageHtml = '<p class="message error-message">用戶憑證文件不存在或無法讀取。</p>';
     else if (error === 'master_not_set') messageHtml = `<p class="message error-message">主密碼尚未設置，請先 <a href="/setup">設置主密碼</a>。</p>`;
-    else if (info === 'logged_out') messageHtml = '<p class="message success-message">您已成功登出後台管理。</p>';
+    else if (info === 'logged_out') messageHtml = '<p class="message success-message">您已成功登出。</p>';
     if (req.query.returnTo) messageHtml += `<p class="message info-message">登錄後將返回到: ${decodeURIComponent(req.query.returnTo)}</p>`;
 
-
     res.send(`
-        <!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>後台管理登錄</title><style>${pageStyles}</style></head>
+        <!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>登錄</title><style>${pageStyles}</style></head>
         <body><div class="container">
             <form method="POST" action="/do_login${req.query.returnTo ? '?returnTo=' + encodeURIComponent(req.query.returnTo) : ''}" id="loginForm">
-                <h2>後台管理登錄</h2>
+                <h2>登錄</h2>
                 ${messageHtml}
-                <label for="password">主密碼:</label>
-                <input type="password" id="password" name="password" required autofocus>
-                <input type="hidden" name="username" value=""> <button type="submit" class="full-width">登錄</button>
+                <label for="username">用戶名 (主帳戶登錄請留空):</label>
+                <input type="text" id="username" name="username" autofocus>
+                <label for="password">密碼:</label>
+                <input type="password" id="password" name="password" required>
+                <button type="submit" class="full-width">登錄</button>
                  <p class="info-message" style="margin-top: 20px;"><a href="/">返回網站首頁</a></p>
             </form>
         </div></body></html>
@@ -376,32 +387,65 @@ app.post('/do_login', (req, res) => {
     if (isMasterPasswordSetupNeeded) {
         return res.redirect('/login?error=master_not_set');
     }
-    const { password: submittedPassword } = req.body; // 主賬戶登錄僅需密碼
+    const { username, password: submittedPassword } = req.body;
+    const returnToUrl = req.query.returnTo ? decodeURIComponent(req.query.returnTo) : null;
 
     if (!submittedPassword) {
-        return res.redirect(`/login?error=invalid${req.query.returnTo ? '&returnTo=' + encodeURIComponent(req.query.returnTo) : ''}`);
+        return res.redirect(`/login?error=invalid${returnToUrl ? '&returnTo=' + encodeURIComponent(returnToUrl) : ''}`);
     }
 
     try {
-        if (!fs.existsSync(MASTER_PASSWORD_STORAGE_FILE)) {
-             isMasterPasswordSetupNeeded = true; // 如果主密碼文件丟失，應重新設置
-             return res.redirect('/setup');
-        }
-        const encryptedMasterPasswordFromFile = fs.readFileSync(MASTER_PASSWORD_STORAGE_FILE, 'utf8');
-        const storedDecryptedMasterPassword = decryptUserPassword(encryptedMasterPasswordFromFile);
+        // 主密碼登錄 (用戶名為空或未提供)
+        if (!username || username.trim() === "") {
+            if (!fs.existsSync(MASTER_PASSWORD_STORAGE_FILE)) {
+                 isMasterPasswordSetupNeeded = true;
+                 return res.redirect('/setup');
+            }
+            const encryptedMasterPasswordFromFile = fs.readFileSync(MASTER_PASSWORD_STORAGE_FILE, 'utf8');
+            const storedDecryptedMasterPassword = decryptUserPassword(encryptedMasterPasswordFromFile);
 
-        if (storedDecryptedMasterPassword === null) { // 解密失敗
-            return res.redirect(`/login?error=decrypt_failed${req.query.returnTo ? '&returnTo=' + encodeURIComponent(req.query.returnTo) : ''}`);
-        }
-        if (submittedPassword === storedDecryptedMasterPassword) { // 密碼匹配
-            // 設置認證 cookie
-            res.cookie('auth', '1', { maxAge: 3600 * 1000 * 8, httpOnly: true, path: '/', sameSite: 'Lax' }); // 8 小時有效期
-            res.cookie('is_master', 'true', { maxAge: 3600 * 1000 * 8, httpOnly: true, path: '/', sameSite: 'Lax' });
-            console.log("[AUTH_GATE] 主密碼登錄成功。");
-            const returnTo = req.query.returnTo ? decodeURIComponent(req.query.returnTo) : '/admin'; // 獲取返回地址或默認到 /admin
-            return res.redirect(returnTo);
-        } else { // 密碼不匹配
-            return res.redirect(`/login?error=invalid${req.query.returnTo ? '&returnTo=' + encodeURIComponent(req.query.returnTo) : ''}`);
+            if (storedDecryptedMasterPassword === null) {
+                return res.redirect(`/login?error=decrypt_failed${returnToUrl ? '&returnTo=' + encodeURIComponent(returnToUrl) : ''}`);
+            }
+            if (submittedPassword === storedDecryptedMasterPassword) {
+                res.cookie('auth', '1', { maxAge: 3600 * 1000 * 8, httpOnly: true, path: '/', sameSite: 'Lax' });
+                res.cookie('is_master', 'true', { maxAge: 3600 * 1000 * 8, httpOnly: true, path: '/', sameSite: 'Lax' });
+                console.log("[AUTH_GATE] 主密碼登錄成功。");
+                return res.redirect(returnToUrl || '/admin'); // 重定向到使用者管理頁面
+            } else {
+                return res.redirect(`/login?error=invalid${returnToUrl ? '&returnTo=' + encodeURIComponent(returnToUrl) : ''}`);
+            }
+        } else { // 普通用戶登錄
+            if (!fs.existsSync(USER_CREDENTIALS_STORAGE_FILE)) {
+                 console.warn("[AUTH_GATE] 用戶嘗試登錄，但用戶憑證文件不存在。");
+                 return res.redirect(`/login?error=no_user_file${returnToUrl ? '&returnTo=' + encodeURIComponent(returnToUrl) : ''}`);
+            }
+            const users = readUserCredentials();
+            if (Object.keys(users).length === 0 && fs.existsSync(USER_CREDENTIALS_STORAGE_FILE) && fs.readFileSync(USER_CREDENTIALS_STORAGE_FILE, 'utf8').trim().length > 0) {
+                console.warn("[AUTH_GATE] 用戶憑證文件可能已損壞或無法解密。");
+                return res.redirect(`/login?error=decrypt_failed${returnToUrl ? '&returnTo=' + encodeURIComponent(returnToUrl) : ''}`);
+            }
+
+            const userData = users[username];
+
+            if (!userData || !userData.passwordHash) { // 用戶不存在或密碼未設置
+                return res.redirect(`/login?error=invalid${returnToUrl ? '&returnTo=' + encodeURIComponent(returnToUrl) : ''}`);
+            }
+
+            const storedDecryptedPassword = decryptUserPassword(userData.passwordHash);
+            if (storedDecryptedPassword === null) {
+                console.error(`[AUTH_GATE] 解密用戶 '${username}' 的密碼失敗。`);
+                return res.redirect(`/login?error=decrypt_failed${returnToUrl ? '&returnTo=' + encodeURIComponent(returnToUrl) : ''}`);
+            }
+
+            if (submittedPassword === storedDecryptedPassword) { // 普通用戶密碼匹配
+                res.cookie('auth', '1', { maxAge: 3600 * 1000 * 8, httpOnly: true, path: '/', sameSite: 'Lax' });
+                res.cookie('is_master', 'false', { maxAge: 3600 * 1000 * 8, httpOnly: true, path: '/', sameSite: 'Lax' });
+                console.log(`[AUTH_GATE] 用戶 '${username}' 登錄成功。`);
+                return res.redirect(returnToUrl || '/'); // 重定向到主頁或指定的返回地址
+            } else {
+                return res.redirect(`/login?error=invalid${returnToUrl ? '&returnTo=' + encodeURIComponent(returnToUrl) : ''}`);
+            }
         }
     } catch (error) {
         console.error("[AUTH_GATE] 登錄處理時发生未知錯誤:", error);
@@ -409,40 +453,243 @@ app.post('/do_login', (req, res) => {
     }
 });
 
-// == LOGOUT ROUTE (for Admin) == (管理員登出路由)
+// == LOGOUT ROUTE ==
 app.get('/logout', (req, res) => {
-    // 清除認證 cookie
     res.clearCookie('auth', { path: '/', httpOnly: true, sameSite: 'Lax' });
     res.clearCookie('is_master', { path: '/', httpOnly: true, sameSite: 'Lax' });
-    console.log("[AUTH_GATE] 管理員已登出。");
-    res.redirect('/login?info=logged_out'); // 重定向到登錄頁並提示已登出
+    console.log("[AUTH_GATE] 用戶已登出。");
+    res.redirect('/login?info=logged_out');
+});
+
+
+// == ADMIN ROUTES (User Management by Master Admin) ==
+// 中介軟體，確保只有主管理員才能訪問後面的使用者管理路由
+function ensureMasterAdmin(req, res, next) {
+    if (req.cookies.auth === '1' && req.cookies.is_master === 'true') {
+        return next(); // 主管理員，允許訪問
+    }
+    // 非主管理員或未登入
+    console.warn("[AUTH_GATE] 未授權訪問網關管理區域，Cookies: ", req.cookies);
+    res.status(403).send(`
+        <!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><title>訪問被拒絕</title><style>${pageStyles}</style></head>
+        <body><div class="container">
+            <h2 class="error-message">訪問被拒絕</h2>
+            <p>您必須以主密碼用戶身份登錄才能訪問此頁面。</p>
+            <a href="/login" class="button-link">去登錄</a>
+            <a href="/" class="button-link" style="margin-left:10px; background-color:#6c757d; border-color:#6c757d;">返回首頁</a>
+        </div></body></html>`);
+}
+
+// GET /admin (主管理員的使用者管理面板)
+app.get('/admin', ensureMasterAdmin, (req, res) => {
+    const users = readUserCredentials();
+    const error = req.query.error;
+    const success = req.query.success;
+    let messageHtml = '';
+    if (error === 'user_exists') messageHtml = '<p class="message error-message">錯誤：用戶名已存在。</p>';
+    else if (error === 'password_mismatch') messageHtml = '<p class="message error-message">錯誤：兩次輸入的密碼不匹配。</p>';
+    else if (error === 'missing_fields') messageHtml = '<p class="message error-message">錯誤：所有必填字段均不能为空。</p>';
+    else if (error === 'unknown') messageHtml = '<p class="message error-message">發生未知錯誤。</p>';
+    else if (error === 'user_not_found') messageHtml = '<p class="message error-message">錯誤: 未找到指定用戶。</p>';
+    else if (error === 'invalid_username') messageHtml = '<p class="message error-message">錯誤: 用戶名不能是 "master" 或包含非法字符。</p>';
+
+    if (success === 'user_added') messageHtml = '<p class="message success-message">用戶添加成功。</p>';
+    else if (success === 'user_deleted') messageHtml = '<p class="message success-message">用戶刪除成功。</p>';
+    else if (success === 'password_changed') messageHtml = '<p class="message success-message">用戶密碼修改成功。</p>';
+
+    let usersTableHtml = '<table><thead><tr><th>用戶名</th><th>操作</th></tr></thead><tbody>';
+    if (Object.keys(users).length === 0) {
+        usersTableHtml += '<tr><td colspan="2" style="text-align:center;">當前沒有普通用戶。</td></tr>';
+    } else {
+        for (const username in users) {
+            usersTableHtml += `
+                <tr>
+                    <td>${username}</td>
+                    <td class="actions">
+                        <form method="POST" action="/admin/delete_user" style="display:inline;">
+                            <input type="hidden" name="usernameToDelete" value="${username}">
+                            <button type="submit" class="danger" onclick="return confirm('確定要刪除用戶 ${username} 嗎？');">刪除</button>
+                        </form>
+                        <form method="POST" action="/admin/change_password_page" style="display:inline;">
+                             <input type="hidden" name="usernameToChange" value="${username}">
+                             <button type="submit">修改密碼</button>
+                        </form>
+                    </td>
+                </tr>`;
+        }
+    }
+    usersTableHtml += '</tbody></table>';
+
+    res.send(`
+        <!DOCTYPE html><html lang="zh-CN">
+        <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>用戶管理 (網關)</title><style>${pageStyles}</style></head>
+        <body>
+            <div class="container admin-container">
+                <div class="logout-link-container"><a href="/logout" class="button-link">登出主帳戶</a></div>
+                <h2>用戶管理面板 (網關主帳戶)</h2>
+                ${messageHtml}
+
+                <h3>現有普通用戶</h3>
+                ${usersTableHtml}
+
+                <h3>添加新普通用戶</h3>
+                <form method="POST" action="/admin/add_user">
+                    <div class="form-row">
+                        <div class="field">
+                            <label for="newUsername">新用戶名:</label>
+                            <input type="text" id="newUsername" name="newUsername" required>
+                        </div>
+                        <div class="field">
+                            <label for="newUserPassword">新用戶密碼:</label>
+                            <input type="password" id="newUserPassword" name="newUserPassword" required>
+                        </div>
+                         <div class="field">
+                            <label for="confirmNewUserPassword">確認密碼:</label>
+                            <input type="password" id="confirmNewUserPassword" name="confirmNewUserPassword" required>
+                        </div>
+                        <button type="submit">添加用戶</button>
+                    </div>
+                </form>
+                <div class="nav-links">
+                    <a href="/" class="button-link" style="background-color:#28a745; border-color:#28a745;">訪問分享網站 (主應用)</a>
+                </div>
+                 <p class="info-message" style="margin-top:20px;">此頁面用於管理可以登錄分享網站的普通用戶帳戶。主應用自身的管理（如文章管理）請通過上方“訪問分享網站”後，在其自身的管理界面操作（如果主應用有此設計）。</p>
+            </div>
+        </body></html>
+    `);
+});
+
+app.post('/admin/add_user', ensureMasterAdmin, (req, res) => {
+    const { newUsername, newUserPassword, confirmNewUserPassword } = req.body;
+    if (!newUsername || !newUserPassword || !confirmNewUserPassword ) {
+        return res.redirect('/admin?error=missing_fields');
+    }
+    if (newUserPassword !== confirmNewUserPassword) {
+        return res.redirect('/admin?error=password_mismatch');
+    }
+    // 簡單用戶名驗證：不允許 "master" 且只允許字母數字下劃線
+    if (newUsername.toLowerCase() === "master" || !/^[a-zA-Z0-9_.-]+$/.test(newUsername) || newUsername.length < 3) {
+        return res.redirect('/admin?error=invalid_username');
+    }
+
+    const users = readUserCredentials();
+    if (users[newUsername]) {
+        return res.redirect('/admin?error=user_exists');
+    }
+
+    try {
+        users[newUsername] = { passwordHash: encryptUserPassword(newUserPassword) };
+        saveUserCredentials(users);
+        console.log(`[AUTH_GATE_ADMIN] 普通用戶 '${newUsername}' 已添加。`);
+        res.redirect('/admin?success=user_added');
+    } catch (error) {
+        console.error("[AUTH_GATE_ADMIN] 添加用戶失敗:", error);
+        res.redirect('/admin?error=unknown');
+    }
+});
+
+app.post('/admin/delete_user', ensureMasterAdmin, (req, res) => {
+    const { usernameToDelete } = req.body;
+    if (!usernameToDelete) {
+        return res.redirect('/admin?error=unknown');
+    }
+    const users = readUserCredentials();
+    if (!users[usernameToDelete]) {
+        return res.redirect('/admin?error=user_not_found');
+    }
+    delete users[usernameToDelete];
+    try {
+        saveUserCredentials(users);
+        console.log(`[AUTH_GATE_ADMIN] 普通用戶 '${usernameToDelete}' 已刪除。`);
+        res.redirect('/admin?success=user_deleted');
+    } catch (error) {
+        console.error(`[AUTH_GATE_ADMIN] 刪除用戶 '${usernameToDelete}' 失敗:`, error);
+        res.redirect('/admin?error=unknown');
+    }
+});
+
+app.post('/admin/change_password_page', ensureMasterAdmin, (req, res) => {
+    const { usernameToChange } = req.body;
+    const error = req.query.error;
+    let errorMessageHtml = '';
+    if (error === 'mismatch') errorMessageHtml = '<p class="message error-message">兩次輸入的密碼不匹配！</p>';
+    else if (error === 'missing_fields') errorMessageHtml = '<p class="message error-message">錯誤：所有密碼字段均為必填項。</p>';
+    else if (error === 'unknown') errorMessageHtml = '<p class="message error-message">發生未知錯誤。</p>';
+
+    if (!usernameToChange) return res.redirect('/admin?error=unknown');
+
+    const users = readUserCredentials();
+    if (!users[usernameToChange]) {
+        return res.redirect('/admin?error=user_not_found');
+    }
+
+    res.send(`
+        <!DOCTYPE html><html lang="zh-CN">
+        <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>修改用戶密碼 (網關)</title><style>${pageStyles}</style></head>
+        <body>
+            <div class="container">
+                <h2>修改用戶 '${usernameToChange}' 的密碼</h2>
+                ${errorMessageHtml}
+                <form method="POST" action="/admin/perform_change_password">
+                    <input type="hidden" name="username" value="${usernameToChange}">
+                    <label for="newPassword">新密碼:</label>
+                    <input type="password" id="newPassword" name="newPassword" required autofocus>
+                    <label for="confirmPassword">確認新密碼:</label>
+                    <input type="password" id="confirmPassword" name="confirmPassword" required>
+                    <button type="submit" class="full-width">確認修改密碼</button>
+                    <div class="nav-links">
+                        <a href="/admin" class="button-link" style="background-color:#6c757d; border-color:#6c757d;">返回用戶管理</a>
+                    </div>
+                </form>
+            </div>
+        </body></html>
+    `);
+});
+
+app.post('/admin/perform_change_password', ensureMasterAdmin, (req, res) => {
+    const { username, newPassword, confirmPassword } = req.body;
+    if (!username || !newPassword || !confirmPassword) {
+         return res.redirect(`/admin/change_password_page?usernameToChange=${encodeURIComponent(username)}&error=missing_fields`);
+    }
+    if (newPassword !== confirmPassword) {
+        return res.redirect(`/admin/change_password_page?usernameToChange=${encodeURIComponent(username)}&error=mismatch`);
+    }
+
+    const users = readUserCredentials();
+    if (!users[username]) {
+        return res.redirect('/admin?error=user_not_found');
+    }
+
+    try {
+        users[username].passwordHash = encryptUserPassword(newPassword);
+        saveUserCredentials(users);
+        console.log(`[AUTH_GATE_ADMIN] 用戶 '${username}' 的密碼已修改。`);
+        res.redirect('/admin?success=password_changed');
+    } catch (error) {
+        console.error(`[AUTH_GATE_ADMIN] 修改用戶 '${username}' 密碼失敗:`, error);
+        res.redirect(`/admin/change_password_page?usernameToChange=${encodeURIComponent(username)}&error=unknown`);
+    }
 });
 
 
 // --- 7. 反向代理中間件 ---
 const proxyToMainApp = createProxyMiddleware({
-    target: `http://localhost:${APP_INTERNAL_PORT}`, // 代理目標：主應用程序
-    changeOrigin: true, // 更改請求頭中的 host 為目標 URL 的 host
-    ws: true, // 支持 WebSocket 代理 (如果主應用使用)
-    logLevel: 'info', // 代理日誌級別: 'debug', 'info', 'warn', 'error', 'silent'
-    onError: (err, req, res, target) => { // 代理出錯時的回調
+    target: `http://localhost:${APP_INTERNAL_PORT}`,
+    changeOrigin: true,
+    ws: true,
+    logLevel: 'info',
+    onError: (err, req, res, target) => {
         console.error('[AUTH_GATE_PROXY] 代理發生錯誤:', err.message, '請求:', req.method, req.url, '目標:', target);
-        if (res && typeof res.writeHead === 'function' && !res.headersSent) { // 如果響應頭未發送
+        if (res && typeof res.writeHead === 'function' && !res.headersSent) {
              try { res.writeHead(502, { 'Content-Type': 'text/html; charset=utf-8' }); } catch (e) { console.error("寫入代理錯誤頭部時出錯:", e); }
         }
-        if (res && typeof res.end === 'function' && res.writable && !res.writableEnded) { // 如果響應可寫且未結束
+        if (res && typeof res.end === 'function' && res.writable && !res.writableEnded) {
             try {
                 res.end(`
                     <!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><title>代理錯誤</title><style>${pageStyles}</style></head>
                     <body><div class="container">
                         <h2 class="error-message">代理錯誤 (502 Bad Gateway)</h2>
                         <p>抱歉，無法連接到後端分享網站服務。</p>
-                        <p>可能的原因：</p>
-                        <ul>
-                            <li>主應用 (server.js) 未能啟動或已崩潰。</li>
-                            <li>主應用未在預期的內部端口 ${APP_INTERNAL_PORT} 上監聽。</li>
-                        </ul>
-                        <p>請檢查服務器日誌以獲取更多信息。</p>
                         <p>錯誤詳情: ${err.message}</p>
                         <div class="nav-links">
                             <a href="/" class="button-link" onclick="location.reload(); return false;">重試</a>
@@ -451,29 +698,15 @@ const proxyToMainApp = createProxyMiddleware({
                     </div></body></html>
                 `);
             } catch (e) { console.error("結束代理錯誤響應時出錯:", e); }
-        } else if (res && typeof res.end === 'function' && !res.writableEnded) { // 如果流不可寫但尚未結束，嘗試結束它
+        } else if (res && typeof res.end === 'function' && !res.writableEnded) {
              try { res.end(); } catch (e) { /* ignore */ }
         }
     }
 });
 
-// 應用代理中間件
-// 所有未被上面特定認證路由處理的請求，都嘗試代理到主應用
-app.use((req, res, next) => {
-    const authRelatedPaths = ['/login', '/do_login', '/setup', '/do_setup', '/logout'];
-    // 如果請求不是由上面的認證路由處理的，則代理到主應用
-    // 並且確保不是 /admin 路徑（因為 /admin 的代理邏輯已包含在下面）
-    if (!authRelatedPaths.includes(req.path) && !req.path.startsWith('/admin')) {
-        return proxyToMainApp(req, res, next);
-    }
-    // 如果是 /admin 路徑，並且已通过全局中间件的认证检查 (cookie 中 is_master 為 true)，也应该被代理
-    if (req.path.startsWith('/admin') && req.cookies.auth === '1' && req.cookies.is_master === 'true') {
-        return proxyToMainApp(req, res, next);
-    }
-    // 其他情況（例如未被特定路由處理的未認證請求，或訪問 /admin 但未通過認證的）
-    // 這些情況應該已經被全局中間件重定向或處理了。
-    next();
-});
+// 將所有未被網關特定路由處理的請求都代理到主應用
+// 這個應該是最後一個路由處理中間件 (在所有 app.get, app.post 等之後)
+app.use(proxyToMainApp);
 
 
 // --- 8. 服務器啟動 ---
@@ -484,8 +717,8 @@ const server = app.listen(PUBLIC_PORT, () => {
     } else {
         console.log(`[AUTH_GATE] 主應用將由本服務管理。`);
         console.log(`[AUTH_GATE] 公共網站訪問: http://localhost:${PUBLIC_PORT}/`);
-        console.log(`[AUTH_GATE] 後台管理登錄: http://localhost:${PUBLIC_PORT}/login`);
-        if (!serverJsProcess || serverJsProcess.killed) { // 確保主應用已啟動
+        console.log(`[AUTH_GATE] 後台使用者管理登錄: http://localhost:${PUBLIC_PORT}/login (用戶名留空使用主密碼)`);
+        if (!serverJsProcess || serverJsProcess.killed) {
             startMainApp();
         }
     }
@@ -495,18 +728,18 @@ const server = app.listen(PUBLIC_PORT, () => {
     );
 });
 
-server.on('error', (error) => { // 監聽服務器錯誤事件
+server.on('error', (error) => {
     if (error.syscall !== 'listen') {
         console.error('[AUTH_GATE] 發生了一個非監聽相關的服務器錯誤:', error);
         return;
     }
     switch (error.code) {
-        case 'EACCES': // 權限不足
-            console.error(`[AUTH_GATE] 錯誤：端口 ${PUBLIC_PORT} 需要提升的權限。請嘗試使用 sudo 或以管理員身份運行，或使用大於1024的端口。`);
+        case 'EACCES':
+            console.error(`[AUTH_GATE] 錯誤：端口 ${PUBLIC_PORT} 需要提升的權限。`);
             process.exit(1);
             break;
-        case 'EADDRINUSE': // 端口已被佔用
-            console.error(`[AUTH_GATE] 錯誤：端口 ${PUBLIC_PORT} 已被其他應用程序占用。請關閉占用該端口的程序或更改 PUBLIC_PORT 配置。`);
+        case 'EADDRINUSE':
+            console.error(`[AUTH_GATE] 錯誤：端口 ${PUBLIC_PORT} 已被其他應用程序占用。`);
             process.exit(1);
             break;
         default:
@@ -517,11 +750,10 @@ server.on('error', (error) => { // 監聽服務器錯誤事件
 
 // --- 9. 優雅關閉處理 ---
 function shutdownGracefully(signal) {
-    if (isShuttingDown) return; // 防止重複執行
-    isShuttingDown = true; // 標記正在關閉
+    if (isShuttingDown) return;
+    isShuttingDown = true;
     console.log(`[AUTH_GATE] 收到 ${signal}。正在關閉服務...`);
 
-    // 關閉 HTTP 服務器
     const serverClosePromise = new Promise((resolve) => {
         server.close(() => {
             console.log('[AUTH_GATE] HTTP 服務已關閉。');
@@ -529,54 +761,36 @@ function shutdownGracefully(signal) {
         });
     });
 
-    // 關閉子進程 (主應用)
     const childProcessPromise = new Promise((resolve) => {
         if (serverJsProcess && !serverJsProcess.killed) {
             console.log('[AUTH_GATE] 正在嘗試終止主應用 (server.js)...');
-            const killTimeout = setTimeout(() => { // 設置超時強制終止
+            const killTimeout = setTimeout(() => {
                 if (serverJsProcess && !serverJsProcess.killed) {
                     console.warn('[AUTH_GATE] 主應用未在 SIGTERM 後3秒內退出，強制發送 SIGKILL...');
-                    serverJsProcess.kill('SIGKILL'); // 強制終止
+                    serverJsProcess.kill('SIGKILL');
                 }
-                resolve(); // 無論如何都要 resolve
+                resolve();
             }, 3000);
-
-            serverJsProcess.on('exit', (code, exitSignal) => { // 監聽子進程退出事件
-                clearTimeout(killTimeout); // 清除超時
-                console.log(`[AUTH_GATE] 主應用已成功退出 (Code: ${code}, Signal: ${exitSignal})。`);
-                resolve();
-            });
-
-            const killed = serverJsProcess.kill('SIGTERM'); // 嘗試優雅終止
-            if (!killed && serverJsProcess && !serverJsProcess.killed) { // 如果發送信號失敗
-                 console.warn('[AUTH_GATE] 向主應用發送 SIGTERM 信號失敗 (可能已退出或無權限)。');
-                 clearTimeout(killTimeout);
-                 resolve();
-            } else if (!serverJsProcess || serverJsProcess.killed) { // 如果子進程已不存在或已死亡
-                clearTimeout(killTimeout);
-                resolve();
-            }
+            serverJsProcess.on('exit', () => { clearTimeout(killTimeout); resolve(); });
+            serverJsProcess.kill('SIGTERM');
         } else {
-            console.log('[AUTH_GATE] 主應用未運行或已被終止。');
             resolve();
         }
     });
 
-    // 等待所有關閉操作完成
     Promise.all([serverClosePromise, childProcessPromise]).then(() => {
         console.log('[AUTH_GATE] 所有服務已關閉。優雅退出。');
         process.exit(0);
     }).catch(err => {
         console.error('[AUTH_GATE] 優雅關閉期間發生錯誤:', err);
-        process.exit(1); // 即使有錯誤也退出
+        process.exit(1);
     });
 
-    // 設置一個總的關閉超時，以防萬一
     setTimeout(() => {
         console.error('[AUTH_GATE] 優雅關閉超時 (10秒)，強制退出。');
         process.exit(1);
     }, 10000);
 }
 
-process.on('SIGINT', () => shutdownGracefully('SIGINT')); // 捕獲 Ctrl+C
-process.on('SIGTERM', () => shutdownGracefully('SIGTERM')); // 捕獲 kill 命令
+process.on('SIGINT', () => shutdownGracefully('SIGINT'));
+process.on('SIGTERM', () => shutdownGracefully('SIGTERM'));
