@@ -1,0 +1,63 @@
+<%- include('partials/header', { pageTitle: '分享列表 - 網絡分享站' }) %>
+
+<section class="page-header">
+    <h2>最新分享</h2>
+    <div class="controls filter-sort-controls">
+        <form action="/" method="GET" class="filter-sort-form">
+            <div class="form-inline-group">
+                <label for="q">搜索:</label>
+                <input type="text" name="q" id="q" value="<%= typeof currentSearch !== 'undefined' ? currentSearch : '' %>" placeholder="搜索標題或內容...">
+            </div>
+            <div class="form-inline-group">
+                <label for="category">分類:</label>
+                <select name="category" id="category">
+                    <option value="">所有分類</option>
+                    <% if (typeof categories !== 'undefined' && categories.length > 0) { %>
+                        <% categories.forEach(cat => { %>
+                            <option value="<%= cat %>" <%= (typeof currentCategory !== 'undefined' && currentCategory === cat) ? 'selected' : '' %>><%= cat %></option>
+                        <% }); %>
+                    <% } %>
+                </select>
+            </div>
+            <button type="submit" class="btn">篩選</button>
+            <% if ((typeof currentCategory !== 'undefined' && currentCategory) || (typeof currentSearch !== 'undefined' && currentSearch)) { %>
+                <a href="/" class="btn btn-secondary">清除篩選</a>
+            <% } %>
+        </form>
+    </div>
+</section>
+
+<% if (typeof articles !== 'undefined' && articles.length > 0) { %>
+    <ul class="articles-list">
+        <% articles.forEach(article => { %>
+            <li class="article-item card">
+                <div class="card-body">
+                    <h3 class="card-title"><a href="/articles/<%= article.id %>"><%= article.title %></a></h3>
+                    <p class="article-meta">
+                        <span class="category-badge"><%= article.category %></span> |
+                        發佈於: <%= new Date(article.createdAt).toLocaleDateString('zh-CN') %> |
+                        更新於: <%= new Date(article.updatedAt).toLocaleDateString('zh-CN') %>
+                    </p>
+                    <div class="article-content-preview">
+                        <%
+                            let plainTextContent = '';
+                            if (article.content) {
+                                plainTextContent = article.content.replace(/<[^>]+>/g, ''); // 移除HTML標籤以生成純文本預覽
+                            }
+                            let preview = plainTextContent.length > 200 ? plainTextContent.substring(0, 200) + '...' : plainTextContent;
+                        %>
+                        <%- preview.length > 0 ? preview : '<i>(無內容預覽)</i>' %>
+                    </div>
+                    <% if (article.attachments && article.attachments.length > 0) { %>
+                        <p class="attachments-preview"><strong>附件數:</strong> <%= article.attachments.length %></p>
+                    <% } %>
+                    <a href="/articles/<%= article.id %>" class="btn btn-sm btn-primary">閱讀全文 &rarr;</a>
+                </div>
+            </li>
+        <% }) %>
+    </ul>
+<% } else { %>
+    <p class="empty-message">目前沒有符合條件的分享內容。</p>
+<% } %>
+
+<%- include('partials/footer') %>
