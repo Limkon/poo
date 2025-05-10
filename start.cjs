@@ -1,4 +1,4 @@
-// start.cjs (認證網關和反向代理 - 再次修正普通使用者登錄重定向)
+// start.cjs (認證網關和反向代理 - 更新 Cookie 有效期)
 require('dotenv').config();
 
 const express = require('express');
@@ -335,7 +335,7 @@ app.get('/login', (req, res) => {
         if (req.cookies.is_master === 'true') {
             return res.redirect(req.query.returnTo && req.query.returnTo.startsWith('/user-admin') ? req.query.returnTo : '/user-admin');
         } else {
-            const returnToTarget = req.query.returnTo && !req.query.returnTo.startsWith('/user-admin') ? req.query.returnTo : '/admin'; // **確保普通使用者跳轉到 /admin**
+            const returnToTarget = req.query.returnTo && !req.query.returnTo.startsWith('/user-admin') ? req.query.returnTo : '/admin';
             return res.redirect(returnToTarget);
         }
     }
@@ -374,7 +374,8 @@ app.post('/do_login', (req, res) => {
     }
     const { username, password: submittedPassword } = req.body;
     const returnToUrl = req.query.returnTo ? decodeURIComponent(req.query.returnTo) : null;
-    const cookieMaxAge = 60 * 1000; // 1 分鐘有效期
+    // **修改：Cookie 有效期改為 30 分鐘**
+    const cookieMaxAge = 30 * 60 * 1000;
 
     if (!submittedPassword) {
         return res.redirect(`/login?error=invalid${returnToUrl ? '&returnTo=' + encodeURIComponent(returnToUrl) : ''}`);
@@ -431,18 +432,13 @@ app.post('/do_login', (req, res) => {
                 let redirectTarget = returnToUrl || '/admin';
                 if (returnToUrl && returnToUrl.startsWith('/user-admin')) {
                     redirectTarget = '/admin';
-                }
-                // 如果 returnToUrl 本身就是 /admin 或 /admin/* (且不是 /user-admin/*)，則使用它
-                // 否則，如果 returnToUrl 是其他公開頁面，也使用它
-                // 只有當 returnToUrl 是 /user-admin/* 或未定義時，才強制為 /admin
-                if (returnToUrl && !returnToUrl.startsWith('/user-admin') && !returnToUrl.startsWith('/admin')) {
-                    // 如果 returnTo 是其他非管理頁面，例如 /articles/some-id，則跳轉到該頁面
+                } else if (returnToUrl && !returnToUrl.startsWith('/admin')) {
+                     // 如果 returnTo 是其他非管理頁面，例如 /articles/some-id，則跳轉到該頁面
                     redirectTarget = returnToUrl;
-                } else if (!returnToUrl || returnToUrl === '/' || returnToUrl.startsWith('/user-admin')) {
-                    // 如果沒有 returnTo，或者 returnTo 是首頁，或者 returnTo 是 user-admin，則跳轉到文章管理
+                } else if (!returnToUrl || returnToUrl === '/') {
+                    // 如果沒有 returnTo，或者 returnTo 是首頁，則跳轉到文章管理
                     redirectTarget = '/admin';
                 }
-                // 如果 returnToUrl 已經是 /admin 或 /admin/*，則 redirectTarget 會是它
                 console.log(`[AUTH_GATE] 普通使用者 '${username}' 登錄後重定向到: ${redirectTarget}`);
                 return res.redirect(redirectTarget);
             } else {
