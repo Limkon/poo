@@ -1,0 +1,93 @@
+<%- include('../partials/header', { pageTitle: '後台管理 - 新建分享', error: typeof error !== 'undefined' ? error : null }) %>
+
+<h2>創建新的分享</h2>
+
+<form action="/admin/new" method="POST" enctype="multipart/form-data" id="article-form" class="article-edit-form">
+    <div class="form-group">
+        <label for="title">標題:</label>
+        <input type="text" id="title" name="title" value="<%= typeof article !== 'undefined' && article.title ? article.title : '' %>" required>
+    </div>
+
+    <div class="form-group">
+        <label for="category">分類:</label>
+        <select id="category" name="category" required>
+            <% if (typeof categories !== 'undefined' && categories.length > 0) { %>
+                <% categories.forEach(cat => { %>
+                    <option value="<%= cat %>" <%= (typeof article !== 'undefined' && article.category === cat) ? 'selected' : '' %>><%= cat %></option>
+                <% }); %>
+            <% } %>
+        </select>
+    </div>
+
+    <div class="form-group">
+        <label for="editor-container">內容 (支持富文本):</label>
+        <div id="editor-container" class="quill-editor">
+            <%- typeof article !== 'undefined' && article.content ? article.content : '<p><br></p>' %> </div>
+        <input type="hidden" name="content" id="quill-content">
+    </div>
+
+    <div class="form-group">
+        <label for="attachments">上傳附件 (可多選, 每個最大25MB):</label>
+        <input type="file" id="attachments" name="attachments" multiple>
+        <small class="form-text text-muted">提示：按住 Ctrl (Windows) 或 Command (Mac) 可以選擇多個文件。</small>
+    </div>
+
+    <input type="hidden" name="isNewArticleFlow" value="true">
+    <div class="form-actions">
+        <button type="submit" class="btn btn-success">保存分享</button>
+        <a href="/admin" class="btn btn-secondary">取消</a>
+    </div>
+</form>
+
+<script>
+    // Quill 編輯器初始化腳本
+    // 確保此腳本在 DOM 完全加載後執行
+    document.addEventListener('DOMContentLoaded', function () {
+        const editorContainer = document.getElementById('editor-container');
+        if (editorContainer) {
+            const quill = new Quill('#editor-container', {
+                theme: 'snow', // 使用 'snow' 主題
+                modules: {
+                    toolbar: [ // 配置工具欄選項
+                        [{ 'header': [1, 2, 3, false] }], // 標題等級
+                        ['bold', 'italic', 'underline', 'strike'],        // 粗體、斜體、下劃線、刪除線
+                        ['link'], // 插入鏈接
+
+                        [{ 'list': 'ordered'}, { 'list': 'bullet' }, { 'list': 'check' }], // 有序列表、無序列表、任務列表
+                        [{ 'indent': '-1'}, { 'indent': '+1' }],          // 縮進
+
+                        [{ 'color': [] }, { 'background': [] }],          // 文字顏色、背景顏色
+                        [{ 'align': [] }], // 對齊方式
+
+                        ['blockquote', 'code-block'], // 引用塊、代碼塊
+                        ['image', 'video'], // 插入圖片、視頻 (注意：圖片/視頻上傳需要額外服務器端處理，此處僅為編輯器內功能)
+
+                        ['clean'] // 清除格式
+                    ]
+                },
+                placeholder: '在此輸入分享內容...' // 編輯器佔位符文本
+            });
+
+            // 如果是新建文章，並且需要在客戶端生成一個臨時ID給 articleIdForUpload 隱藏欄位
+            // (這取決於您在 routes/articles.js 中 multer destination 的具體實現方式)
+            // const articleIdInput = document.getElementById('articleIdForUpload');
+            // if (articleIdInput && !articleIdInput.value && document.body.contains(articleIdInput)) { // 確保元素存在
+            //     // 生成一個簡易的臨時ID，例如 'temp-' + 隨機字符串
+            //     articleIdInput.value = 'temp-' + Math.random().toString(36).substring(2, 11);
+            // }
+
+
+            // 在表單提交前，將 Quill 編輯器的內容同步到隱藏的 input 欄位
+            const articleForm = document.getElementById('article-form');
+            const quillContentInput = document.getElementById('quill-content');
+            if (articleForm && quillContentInput) {
+                articleForm.addEventListener('submit', function() {
+                    // 從 Quill 獲取 HTML 內容並賦值給隱藏的 input
+                    quillContentInput.value = quill.root.innerHTML;
+                });
+            }
+        }
+    });
+</script>
+
+<%- include('../partials/footer') %>
