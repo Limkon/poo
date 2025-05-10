@@ -1,4 +1,4 @@
-// start.cjs (認證網關和反向代理 - 修正普通使用者登錄重定向)
+// start.cjs (認證網關和反向代理 - 再次修正普通使用者登錄重定向)
 require('dotenv').config();
 
 const express = require('express');
@@ -219,8 +219,8 @@ if (isMasterPasswordSetupNeeded) {
 // --- 5. 全局中介軟體 - 處理重定向和基礎訪問控制 ---
 app.use((req, res, next) => {
     const authSpecificPaths = ['/login', '/do_login', '/setup', '/do_setup', '/logout'];
-    const gatewayUserAdminBasePath = '/user-admin'; // 網關處理的使用者管理
-    const mainAppAdminBasePath = '/admin';     // 主應用處理的文章等內容管理
+    const gatewayUserAdminBasePath = '/user-admin';
+    const mainAppAdminBasePath = '/admin';
 
     const staticAssetPath = req.path.startsWith('/css/') || req.path.startsWith('/js/') || req.path.startsWith('/uploads/');
     if (staticAssetPath) {
@@ -238,9 +238,9 @@ app.use((req, res, next) => {
         return next(); // 由後面的 userAdminRouter 及其 ensureMasterAdmin 處理
     }
 
-    if (req.path.startsWith(mainAppAdminBasePath)) { // 例如 /admin 或 /admin/articles
-        if (req.cookies.auth === '1') { // 任何已登入的使用者
-            return next(); // 允許請求繼續，將被代理到主應用
+    if (req.path.startsWith(mainAppAdminBasePath)) {
+        if (req.cookies.auth === '1') {
+            return next(); // 允許已登入使用者訪問主應用的 /admin/*，將被代理
         } else {
             console.warn(`[AUTH_GATE] 未經身份驗證的使用者嘗試存取主應用的管理路徑: ${req.path}`);
             return res.redirect(`/login?returnTo=${encodeURIComponent(req.originalUrl)}`);
@@ -252,8 +252,7 @@ app.use((req, res, next) => {
             if (req.cookies.is_master === 'true') {
                 return res.redirect(gatewayUserAdminBasePath);
             } else {
-                // **修改：普通使用者登入後，如果嘗試訪問 /login，則跳轉到 /admin (文章管理)**
-                return res.redirect(mainAppAdminBasePath);
+                return res.redirect(mainAppAdminBasePath); // 普通使用者已登入，訪問 /login 則跳轉到文章管理
             }
         }
         return next();
@@ -434,7 +433,7 @@ app.post('/do_login', (req, res) => {
                 if (returnToUrl && returnToUrl.startsWith('/user-admin')) { // 如果 returnTo 是 user-admin，則忽略，跳轉到 /admin
                     redirectTarget = '/admin';
                 }
-                // 如果 returnToUrl 本身就是 /admin 或 /admin/*，則使用它 (除非它是 /user-admin)
+                // 如果 returnToUrl 本身就是 /admin 或 /admin/* (且不是 /user-admin/*)，則使用它
                 return res.redirect(redirectTarget);
             } else {
                 return res.redirect(`/login?error=invalid${returnToUrl ? '&returnTo=' + encodeURIComponent(returnToUrl) : ''}`);
