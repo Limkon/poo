@@ -1,5 +1,5 @@
-// start.cjs (認證網關和反向代理 - 修正權限和404問題)
-require('dotenv').config(); // 在檔案頂部載入 .env 檔案
+// start.cjs (認證網關和反向代理 - 修正登錄重定向和代理邏輯)
+require('dotenv').config();
 
 const express = require('express');
 const bodyParser = require('body-parser');
@@ -72,7 +72,7 @@ function startMainApp() {
         ...process.env,
         PORT: APP_INTERNAL_PORT.toString(),
         NOTEPAD_PORT: APP_INTERNAL_PORT.toString(),
-        GATEWAY_PUBLIC_PORT: PUBLIC_PORT.toString() // 確保這個也傳遞下去
+        GATEWAY_PUBLIC_PORT: PUBLIC_PORT.toString()
     };
     const options = { stdio: 'inherit', env: mainAppEnv };
 
@@ -222,33 +222,30 @@ app.use((req, res, next) => {
     const gatewayUserAdminBasePath = '/user-admin'; // 網關處理的使用者管理
     const mainAppAdminBasePath = '/admin';     // 主應用處理的文章等內容管理
 
-    // 靜態資源請求通常不應被此邏輯攔截，它們應該由代理或主應用的 express.static 處理
-    // 但為保險起見，可以初步排除
     const staticAssetPath = req.path.startsWith('/css/') || req.path.startsWith('/js/') || req.path.startsWith('/uploads/');
     if (staticAssetPath) {
-        return next(); // 讓代理處理
+        return next(); // 靜態資源直接通過，它們將被代理到主應用或由主應用直接提供
     }
 
     // 1. 處理主密碼設置流程
     if (isMasterPasswordSetupNeeded) {
         if (req.path === '/setup' || req.path === '/do_setup') {
-            return next(); // 允許訪問設置頁面
+            return next();
         }
-        return res.redirect('/setup'); // 其他所有請求重定向到設置頁面
+        return res.redirect('/setup');
     }
 
-    // 2. 處理網關自身的使用者管理路徑 (/user-admin/*)
+    // 2. 如果請求的是網關自己處理的使用者管理路徑 (/user-admin/*)
     if (req.path.startsWith(gatewayUserAdminBasePath)) {
         // 這些路徑將由後面的 userAdminRouter 處理，該 router 內部有 ensureMasterAdmin 中介軟體
         return next();
     }
 
-    // 3. 處理主應用的管理路徑 (/admin/*)
+    // 3. 如果請求的是主應用的管理路徑 (/admin/*)
     if (req.path.startsWith(mainAppAdminBasePath)) {
         if (req.cookies.auth === '1') { // 任何已登入的使用者 (主管理員或普通使用者)
             // 允許請求繼續，它將被代理到主應用程式
-            // 主應用程式 (server.js / routes/articles.js) 應自行處理其 /admin/* 路徑的內部權限（如果需要進一步區分）
-            return next();
+            return next(); // 請求將會被後面的 proxyToMainApp 中介軟體處理
         } else {
             // 未登入，嘗試存取主應用的管理路徑
             console.warn(`[AUTH_GATE] 未經身份驗證的使用者嘗試存取主應用的管理路徑: ${req.path}`);
@@ -263,8 +260,8 @@ app.use((req, res, next) => {
             if (req.cookies.is_master === 'true') {
                 return res.redirect(gatewayUserAdminBasePath); // 主管理員重定向到使用者管理
             } else {
-                // 普通使用者重定向到主應用的文章管理 (假設是 /admin/articles)
-                return res.redirect('/admin/articles');
+                // 普通使用者重定向到主應用的文章管理 (假設是 /admin)
+                return res.redirect(mainAppAdminBasePath); // **修改：普通使用者登入後訪問 /login 也應跳轉到文章管理**
             }
         }
         return next(); // 未登入或訪問 /logout，允許繼續到特定路由處理器
@@ -346,14 +343,12 @@ app.post('/do_setup', (req, res) => {
 
 // == LOGIN ROUTES ==
 app.get('/login', (req, res) => {
-    // 如果已登入，根據身份重定向
     if (req.cookies.auth === '1') {
         if (req.cookies.is_master === 'true') {
-            // 主管理員，如果 returnTo 是 /user-admin/*，則跳轉，否則到 /user-admin
             return res.redirect(req.query.returnTo && req.query.returnTo.startsWith('/user-admin') ? req.query.returnTo : '/user-admin');
         } else {
-            // 普通使用者，如果 returnTo 不是 /user-admin/*，則跳轉，否則到 /admin/articles
-            const returnToTarget = req.query.returnTo && !req.query.returnTo.startsWith('/user-admin') ? req.query.returnTo : '/admin/articles';
+            // **修改：普通使用者登入後，如果 returnTo 是 /user-admin，則跳轉到 /admin (文章管理)**
+            const returnToTarget = req.query.returnTo && !req.query.returnTo.startsWith('/user-admin') ? req.query.returnTo : '/admin';
             return res.redirect(returnToTarget);
         }
     }
@@ -399,8 +394,7 @@ app.post('/do_login', (req, res) => {
     }
 
     try {
-        // 主密碼登錄 (用戶名為空或未提供)
-        if (!username || username.trim() === "") {
+        if (!username || username.trim() === "") { // 主密碼登錄
             if (!fs.existsSync(MASTER_PASSWORD_STORAGE_FILE)) {
                  isMasterPasswordSetupNeeded = true;
                  return res.redirect('/setup');
@@ -415,7 +409,6 @@ app.post('/do_login', (req, res) => {
                 res.cookie('auth', '1', { maxAge: cookieMaxAge, httpOnly: true, path: '/', sameSite: 'Lax' });
                 res.cookie('is_master', 'true', { maxAge: cookieMaxAge, httpOnly: true, path: '/', sameSite: 'Lax' });
                 console.log("[AUTH_GATE] 主密碼登錄成功。");
-                // 主管理員登入後重定向到 /user-admin 或 returnTo (如果 returnTo 是 /user-admin/*)
                 return res.redirect(returnToUrl && returnToUrl.startsWith('/user-admin') ? returnToUrl : '/user-admin');
             } else {
                 return res.redirect(`/login?error=invalid${returnToUrl ? '&returnTo=' + encodeURIComponent(returnToUrl) : ''}`);
@@ -447,17 +440,16 @@ app.post('/do_login', (req, res) => {
                 res.cookie('auth', '1', { maxAge: cookieMaxAge, httpOnly: true, path: '/', sameSite: 'Lax' });
                 res.cookie('is_master', 'false', { maxAge: cookieMaxAge, httpOnly: true, path: '/', sameSite: 'Lax' });
                 console.log(`[AUTH_GATE] 用戶 '${username}' 登錄成功。`);
-                // 普通使用者登入後，如果 returnToUrl 指向網關的使用者管理頁面，則重定向到文章管理，否則到 returnToUrl 或文章管理
-                let redirectTarget = returnToUrl || '/admin/articles'; // 默認跳轉到文章管理
-                if (returnToUrl) {
-                    if (returnToUrl.startsWith('/user-admin')) { // 普通用戶不應跳轉到網關的使用者管理頁
-                        redirectTarget = '/admin/articles';
-                    } else if (returnToUrl === '/admin' && !returnToUrl.startsWith('/admin/articles')) {
-                        // 如果 returnTo 是籠統的 /admin (且不是 /admin/articles)，也明確跳轉到文章管理
-                        redirectTarget = '/admin/articles';
-                    }
-                    // 否則，redirectTarget 保持為 returnToUrl
+                // **修改：普通使用者登入後，重定向到 /admin (由主應用處理的文章管理)**
+                let redirectTarget = returnToUrl || '/admin';
+                if (returnToUrl && returnToUrl.startsWith('/user-admin')) { // 如果 returnTo 是 user-admin，則忽略，跳轉到 /admin
+                    redirectTarget = '/admin';
+                } else if (returnToUrl && !returnToUrl.startsWith('/admin')) { // 如果 returnTo 不是 /admin/*，則跳轉到 /admin
+                     redirectTarget = '/admin'; // 或者 returnToUrl 如果您希望跳轉到其他非管理頁面
+                } else if (!returnToUrl) { // 如果沒有 returnToUrl，默認到 /admin
+                    redirectTarget = '/admin';
                 }
+                // 如果 returnToUrl 本身就是 /admin 或 /admin/*，則使用它
                 return res.redirect(redirectTarget);
             } else {
                 return res.redirect(`/login?error=invalid${returnToUrl ? '&returnTo=' + encodeURIComponent(returnToUrl) : ''}`);
@@ -479,12 +471,11 @@ app.get('/logout', (req, res) => {
 
 
 // == USER ADMIN ROUTES (Handled by Gateway, for Master Admin only) ==
-const userAdminRouter = express.Router(); // 創建一個新的路由器實例
+const userAdminRouter = express.Router();
 
-// 中介軟體，確保只有主管理員才能訪問後面的使用者管理路由
 function ensureMasterAdmin(req, res, next) {
     if (req.cookies.auth === '1' && req.cookies.is_master === 'true') {
-        return next(); // 是主管理員，允許訪問
+        return next();
     }
     console.warn("[AUTH_GATE] 未授權訪問網關使用者管理區域，Cookies: ", req.cookies);
     res.status(403).send(`
@@ -497,7 +488,6 @@ function ensureMasterAdmin(req, res, next) {
         </div></body></html>`);
 }
 
-// GET /user-admin (主管理員的使用者管理面板)
 userAdminRouter.get('/', ensureMasterAdmin, (req, res) => {
     const users = readUserCredentials();
     const error = req.query.error;
@@ -567,7 +557,7 @@ userAdminRouter.get('/', ensureMasterAdmin, (req, res) => {
                     </div>
                 </form>
                 <div class="nav-links">
-                    <a href="/admin/articles" class="button-link" style="background-color:#28a745; border-color:#28a745;">訪問文章管理 (主應用)</a>
+                    <a href="/admin" class="button-link" style="background-color:#28a745; border-color:#28a745;">訪問文章管理 (主應用)</a>
                 </div>
                  <p class="info-message" style="margin-top:20px;">此頁面用於管理可以登錄分享網站的普通用戶帳戶。主應用自身的管理（如文章管理）請通過上方“訪問文章管理”鏈接操作。</p>
             </div>
@@ -580,7 +570,7 @@ userAdminRouter.post('/add', ensureMasterAdmin, (req, res) => {
     if (!newUsername || !newUserPassword || !confirmNewUserPassword ) {
         return res.redirect('/user-admin?error=missing_fields');
     }
-    if (newUserPassword.trim() === '') { // 檢查密碼是否為空
+    if (newUserPassword.trim() === '') {
         return res.redirect('/user-admin?error=password_empty');
     }
     if (newUserPassword !== confirmNewUserPassword) {
@@ -674,7 +664,7 @@ userAdminRouter.post('/perform-change-password', ensureMasterAdmin, (req, res) =
         queryParams.append('error', 'missing_fields');
         return res.redirect(`${redirectUrl}?${queryParams.toString()}`);
     }
-    if (newPassword.trim() === '') { // 檢查密碼是否為空
+    if (newPassword.trim() === '') {
         queryParams.append('error', 'password_empty');
         return res.redirect(`${redirectUrl}?${queryParams.toString()}`);
     }
@@ -700,7 +690,7 @@ userAdminRouter.post('/perform-change-password', ensureMasterAdmin, (req, res) =
     }
 });
 
-app.use('/user-admin', userAdminRouter); // 將使用者管理路由掛載到 /user-admin
+app.use('/user-admin', userAdminRouter);
 
 
 // --- 7. 反向代理中間件 ---
@@ -708,7 +698,7 @@ const proxyToMainApp = createProxyMiddleware({
     target: `http://localhost:${APP_INTERNAL_PORT}`,
     changeOrigin: true,
     ws: true,
-    logLevel: 'debug', // **修改：將日誌級別改為 'debug' 以獲取更詳細的代理日誌**
+    logLevel: 'debug',
     onError: (err, req, res, target) => {
         console.error('[AUTH_GATE_PROXY] 代理發生錯誤:', err.message, '請求:', req.method, req.url, '目標:', target);
         if (res && typeof res.writeHead === 'function' && !res.headersSent) {
@@ -736,7 +726,6 @@ const proxyToMainApp = createProxyMiddleware({
 });
 
 // 將所有未被網關特定路由處理的請求都代理到主應用
-// 這個應該是最後一個路由處理中間件
 app.use(proxyToMainApp);
 
 
