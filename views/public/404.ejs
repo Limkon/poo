@@ -1,0 +1,14 @@
+<%- include('../partials/header', { pageTitle: '404 - 頁面未找到' }) %>
+
+<div class="error-page-content" style="text-align: center; padding: 40px 15px;">
+    <img src="https://placehold.co/150x150/EFEFEF/AAAAAA?text=路徑錯誤" alt="[一個表示頁面未找到的可愛插圖]" style="max-width: 150px; margin-bottom: 20px; border-radius: 50%;">
+    <h2>404 - 頁面未找到</h2>
+    <p>抱歉，您要查找的頁面不存在或已被移動。</p>
+    <p>您可以嘗試返回首頁，或檢查您輸入的網址是否正確。</p>
+    <div style="margin-top: 30px;">
+        <a href="/" class="btn btn-primary">返回首頁</a>
+        <a href="javascript:history.back()" class="btn btn-secondary" style="margin-left: 10px;">返回上一頁</a>
+    </div>
+</div>
+
+<%- include('../partials/footer') %>
