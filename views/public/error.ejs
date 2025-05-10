@@ -1,0 +1,20 @@
+<%- include('../partials/header', { pageTitle: pageTitle || '發生錯誤' }) %>
+
+<div class="error-page-content" style="text-align: center; padding: 40px 15px;">
+    <img src="https://placehold.co/150x150/FFD2D2/AA5050?text=服務器錯誤" alt="[一個表示服務器錯誤的插圖]" style="max-width: 150px; margin-bottom: 20px; border-radius: 50%;">
+    <h2><%= message || '服務器發生錯誤' %></h2>
+
+    <% if (typeof error !== 'undefined' && error && error.stack && process.env.NODE_ENV === 'development') { %>
+        <p style="margin-top: 15px; color: #721c24;">詳細錯誤信息 (僅開發模式顯示):</p>
+        <pre style="text-align: left; background-color: #f1f1f1; padding: 15px; border-radius: 5px; overflow-x: auto; white-space: pre-wrap; word-wrap: break-word; max-height: 300px;"><%= error.stack %></pre>
+    <% } else { %>
+        <p style="margin-top: 15px;">我們很抱歉，處理您的請求時發生了意外錯誤。請稍後再試。</p>
+    <% } %>
+
+    <div style="margin-top: 30px;">
+        <a href="javascript:history.back()" class="btn btn-secondary">返回上一頁</a>
+        <a href="/" class="btn btn-primary" style="margin-left: 10px;">返回首頁</a>
+    </div>
+</div>
+
+<%- include('../partials/footer') %>
