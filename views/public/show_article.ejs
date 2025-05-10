@@ -1,0 +1,33 @@
+<%- include('../partials/header', { pageTitle: article.title + " - 網絡分享站" }) %>
+
+<article class="article-detail-view card">
+    <header class="card-header">
+        <h2><%= article.title %></h2>
+        <p class="article-meta">
+            分類: <span class="category-badge"><%= article.category %></span> |
+            創建於: <%= new Date(article.createdAt).toLocaleString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' }) %> |
+            最後更新: <%= new Date(article.updatedAt).toLocaleString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' }) %>
+        </p>
+    </header>
+    <section class="card-body article-content-full ql-snow"> <div class="ql-editor" style="all: unset; padding:0; min-height: auto; line-height: inherit; font-size: inherit;"> <%- article.content %> </div>
+    </section>
+    <% if (article.attachments && article.attachments.length > 0) { %>
+        <section class="card-body attachments-section">
+            <h4>附件下載:</h4>
+            <ul class="attachments-list">
+                <% article.attachments.forEach(att => { %>
+                    <li>
+                        <a href="<%= att.path %>" download="<%= att.originalname %>" title="下載 <%= att.originalname %>">
+                            <%= att.originalname %> (<%= (att.size / 1024).toFixed(1) %> KB)
+                        </a>
+                    </li>
+                <% }); %>
+            </ul>
+        </section>
+    <% } %>
+    <footer class="card-footer article-detail-actions">
+        <a href="/" class="btn btn-secondary">&larr; 返回列表</a>
+    </footer>
+</article>
+
+<%- include('../partials/footer') %>
