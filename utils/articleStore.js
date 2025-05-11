@@ -101,29 +101,36 @@ export async function saveArticle(articleData) {
 }
 
 export async function deleteArticleById(id) {
-  console.log(`[ArticleStore deleteArticleById] 開始刪除文章 ID: ${id}`);
+  console.log(`[ArticleStore deleteArticleById] 收到刪除文章請求，ID: ${id}`);
+  if (!id || typeof id !== 'string' || id.trim() === '') {
+    console.error('[ArticleStore deleteArticleById] 無效的文章 ID:', id);
+    throw new Error('無效的文章 ID');
+  }
   await ensureDir(articlesDir);
   const articleJsonFilePath = path.join(articlesDir, `${id}.json`);
   const articleUploadsDirForId = path.join(publicUploadsArticlesDir, id);
 
   let jsonDeleted = false;
   try {
-    console.log(`[ArticleStore deleteArticleById] 正在嘗試刪除 JSON 檔案: ${articleJsonFilePath}`);
+    console.log(`[ArticleStore deleteArticleById] 正在檢查 JSON 檔案是否存在: ${articleJsonFilePath}`);
+    await fs.access(articleJsonFilePath); // 檢查檔案是否存在
+    console.log(`[ArticleStore deleteArticleById] JSON 檔案存在，嘗試刪除...`);
     await fs.unlink(articleJsonFilePath);
     jsonDeleted = true;
     console.log(`[ArticleStore deleteArticleById] 成功刪除 JSON 檔案: ${articleJsonFilePath}`);
   } catch (error) {
     if (error.code === 'ENOENT') {
       console.warn(`[ArticleStore deleteArticleById] 未找到要刪除的文章 JSON 檔案: ${id}。可能已被刪除或 ID 錯誤。`);
-      return false; // 文章 JSON 檔案未找到
+      return false; // 文章 JSON 檔案未找到，返回 false
     }
     console.error(`[ArticleStore deleteArticleById] 刪除文章 JSON 檔案 ${id} 時發生錯誤:`, error);
-    throw error; // 向上拋出錯誤
+    throw error; // 對於其他錯誤，向上拋出
   }
 
+  // 僅當 JSON 檔案成功刪除後才嘗試刪除附件目錄
   if (jsonDeleted) {
     try {
-      await fs.access(articleUploadsDirForId);
+      await fs.access(articleUploadsDirForId); // 檢查附件目錄是否存在
       console.log(`[ArticleStore deleteArticleById] 附件目錄存在，嘗試刪除: ${articleUploadsDirForId}`);
       await fs.rm(articleUploadsDirForId, { recursive: true, force: true });
       console.log(`[ArticleStore deleteArticleById] 成功刪除附件目錄: ${articleUploadsDirForId}`);
@@ -132,11 +139,12 @@ export async function deleteArticleById(id) {
         console.log(`[ArticleStore deleteArticleById] 文章 ${id} 沒有附件目錄，跳過刪除。`);
       } else {
         console.error(`[ArticleStore deleteArticleById] 刪除附件目錄 ${articleUploadsDirForId} 時出錯 (非致命):`, dirError);
+        // 即使附件目錄刪除失敗，JSON 已刪除，我們仍然可以認為主要刪除操作部分成功
       }
     }
   }
-  console.log(`[ArticleStore deleteArticleById] 文章 ${id} 刪除流程完成。返回: ${jsonDeleted}`);
-  return jsonDeleted;
+  console.log(`[ArticleStore deleteArticleById] 文章 ${id} 刪除流程完成。JSON 刪除狀態: ${jsonDeleted}`);
+  return jsonDeleted; // 返回 JSON 檔案是否成功刪除的狀態
 }
 
 export async function addAttachmentToArticle(articleId, attachmentData) {
@@ -166,7 +174,7 @@ export async function removeAttachmentFromArticle(articleId, filenameToDelete) {
         article = await getArticleById(articleId);
     } catch (error) {
         console.error(`[ArticleStore removeAttachmentFromArticle] 獲取文章 ${articleId} 失敗:`, error);
-        throw error; // 重新拋出錯誤
+        throw error;
     }
 
     if (!article) {
@@ -177,7 +185,9 @@ export async function removeAttachmentFromArticle(articleId, filenameToDelete) {
     const attachmentIndex = article.attachments.findIndex(att => att.filename === filenameToDelete);
     if (attachmentIndex === -1) {
         console.warn(`[ArticleStore removeAttachmentFromArticle] 在文章 ${articleId} 記錄中未找到磁碟檔名為 ${filenameToDelete} 的附件。`);
-        return article; // 或者拋出錯誤表示附件未找到
+        // 即使附件記錄不存在，也可能需要嘗試刪除物理文件（如果有的話），或者直接返回
+        // 為了安全，如果記錄不存在，我們假設物理文件也不應該存在或不應被刪除
+        return article; // 或者可以拋出錯誤表示附件未找到
     }
 
     const attachmentToRemove = article.attachments[attachmentIndex];
@@ -192,11 +202,12 @@ export async function removeAttachmentFromArticle(articleId, filenameToDelete) {
         console.log(`[ArticleStore removeAttachmentFromArticle] 已從文章 ${articleId} 移除附件記錄 (磁碟檔名: ${filenameToDelete}, 原始檔名: ${attachmentToRemove.originalname})`);
     } catch (saveError) {
         console.error(`[ArticleStore removeAttachmentFromArticle] 保存更新後的文章 ${articleId} JSON 時出錯:`, saveError);
-        throw saveError;
+        throw saveError; // 拋出錯誤，讓上層處理
     }
 
     try {
         console.log(`[ArticleStore removeAttachmentFromArticle] 嘗試刪除物理附件檔案: ${physicalFilePath}`);
+        await fs.access(physicalFilePath); // 檢查檔案是否存在
         await fs.unlink(physicalFilePath);
         console.log(`[ArticleStore removeAttachmentFromArticle] 已刪除物理附件檔案: ${physicalFilePath}`);
     } catch (fileError) {
@@ -205,6 +216,7 @@ export async function removeAttachmentFromArticle(articleId, filenameToDelete) {
         } else {
             console.error(`[ArticleStore removeAttachmentFromArticle] 刪除物理附件檔案 ${physicalFilePath} 時出錯:`, fileError);
         }
+        // 即使刪除物理檔案失敗，記錄也已更新。可以考慮是否需要更複雜的回滾邏輯。
     }
     console.log(`[ArticleStore removeAttachmentFromArticle] 附件 ${filenameToDelete} 從文章 ${articleId} 移除流程完成。`);
     return article;
