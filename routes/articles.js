@@ -32,7 +32,7 @@ const articleStorage = multer.diskStorage({
         articleIdToUse = req.tempGeneratedArticleId;
     } else {
         console.warn('[Multer Destination] 無法確定文章 ID，將使用預設臨時 ID');
-        articleIdToUse = 'temp_unknown_article';
+        articleIdToUse = 'temp_unknown_article'; // 應避免這種情況
     }
     const uploadPath = await ensureArticleUploadDir(articleIdToUse);
     cb(null, uploadPath);
@@ -51,10 +51,6 @@ const upload = multer({
   storage: articleStorage,
   limits: { fileSize: MAX_FILE_SIZE },
   fileFilter: (req, file, cb) => {
-    // 為了處理中文檔名，我們需要確保 multer 能正確處理 UTF-8
-    // 通常 multer 會嘗試使用請求頭中的 charset，但瀏覽器行為可能不一致
-    // Express 預設會處理 UTF-8 的 URL 編碼，但對於 multipart/form-data，依賴 multer 自身
-    // 檢查 file.originalname 是否已經是正確解碼的 UTF-8 字串
     console.log(`[Multer FileFilter] 檔案: ${file.originalname}, mimetype: ${file.mimetype}, encoding: ${file.encoding}`);
     cb(null, true);
   }
@@ -121,13 +117,8 @@ router.get('/articles/download/:id/:filename', async (req, res, next) => {
         const filePath = path.join(publicUploadsArticlesDir, articleId, filename);
         console.log(`[Download] 準備下載檔案: ${filePath}, 原始名稱: ${attachment.originalname}`);
 
-        // 使用 RFC 5987 方式處理非 ASCII 字元，確保 UTF-8 編碼
         const encodedOriginalname = encodeURIComponent(attachment.originalname);
         res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodedOriginalname}`);
-        // 也設定一個備用的 filename (不帶 * 的)，供不完全支援 RFC 5987 的客戶端使用
-        // 但要注意，這個備用檔名如果包含非 ASCII 字元，可能仍會出現問題
-        // res.setHeader('Content-Disposition', `attachment; filename="${attachment.originalname}"; filename*=UTF-8''${encodedOriginalname}`);
-
 
         await fs.access(filePath);
         res.download(filePath, attachment.originalname, (err) => {
@@ -199,13 +190,10 @@ router.post('/admin/new', markNewArticleFlow, upload.array('attachments', 10), a
     if (req.files && req.files.length > 0) {
         await ensureArticleUploadDir(articleIdToUse);
         for (const file of req.files) {
-            // **重要：確保 file.originalname 是正確的 UTF-8 字串**
-            // Multer 應該會處理請求頭中的 Content-Type 和 Content-Disposition
-            // 如果檔名仍然亂碼，問題可能在瀏覽器端或更深層的伺服器配置
             console.log(`[Admin New Article] 處理上傳檔案: originalname='${file.originalname}', filename on disk='${file.filename}', encoding='${file.encoding}'`);
             const relativePath = `/uploads/articles/${articleIdToUse}/${file.filename}`;
             newArticleData.attachments.push({
-                originalname: file.originalname, // 直接使用 multer 提供的 originalname
+                originalname: file.originalname,
                 filename: file.filename,
                 path: relativePath,
                 mimetype: file.mimetype,
@@ -260,13 +248,7 @@ router.post('/admin/edit/:id', markNewArticleFlow, upload.array('new_attachments
         for (const file of req.files) {
             console.log(`[Admin Edit Article] 處理新上傳檔案: originalname='${file.originalname}', filename on disk='${file.filename}', encoding='${file.encoding}'`);
             const relativePath = `/uploads/articles/${articleId}/${file.filename}`;
-            article.attachments.push({
-                originalname: file.originalname,
-                filename: file.filename,
-                path: relativePath,
-                mimetype: file.mimetype,
-                size: file.size
-            });
+            article.attachments.push({ originalname: file.originalname, filename: file.filename, path: relativePath, mimetype: file.mimetype, size: file.size });
         }
     }
     await saveArticle(article);
@@ -275,12 +257,14 @@ router.post('/admin/edit/:id', markNewArticleFlow, upload.array('new_attachments
   } catch (err) { console.error(`[Admin] 更新文章 ${articleId} 時出錯:`, err); next(err); }
 });
 
+// **修改：增強刪除文章路由的日誌和錯誤處理**
 router.post('/admin/delete/:id', async (req, res, next) => {
   const articleId = req.params.id;
-  console.log(`[ROUTE /admin/delete/:id] 收到刪除文章請求 ID: ${articleId}`);
+  console.log(`[ROUTE /admin/delete/:id] 收到刪除文章請求 ID: ${articleId}. Cookies: auth=${req.cookies.auth}, is_master=${req.cookies.is_master}`);
   try {
+    console.log(`[ROUTE /admin/delete/:id] 準備呼叫 deleteArticleById(${articleId})`);
     const success = await deleteArticleById(articleId);
-    console.log(`[ROUTE /admin/delete/:id] deleteArticleById 為 ${articleId} 返回: ${success}`);
+    console.log(`[ROUTE /admin/delete/:id] deleteArticleById(${articleId}) 返回: ${success}`);
     if (success) {
       console.log(`[ROUTE /admin/delete/:id] 文章 ${articleId} 刪除成功。重定向到 /admin?success=deleted`);
       return res.redirect('/admin?success=分享內容及其附件已成功刪除');
@@ -290,26 +274,31 @@ router.post('/admin/delete/:id', async (req, res, next) => {
     }
   } catch (err) {
     console.error(`[ROUTE /admin/delete/:id] 刪除文章 ${articleId} 時發生嚴重錯誤:`, err);
+    // 確保將錯誤傳遞給下一個錯誤處理中介軟體
     return next(err);
   }
 });
 
+// **修改：增強刪除附件路由的日誌和錯誤處理**
 router.post('/admin/attachments/delete/:id/:filename', async (req, res, next) => {
     const { id: articleId, filename } = req.params;
-    console.log(`[ROUTE /admin/attachments/delete] 請求刪除文章 ${articleId} 的附件 (磁碟檔名: ${filename})`);
+    console.log(`[ROUTE /admin/attachments/delete] 請求刪除文章 ${articleId} 的附件 (磁碟檔名: ${filename}). Cookies: auth=${req.cookies.auth}, is_master=${req.cookies.is_master}`);
     try {
+        console.log(`[ROUTE /admin/attachments/delete] 準備呼叫 removeAttachmentFromArticle(${articleId}, ${filename})`);
         const updatedArticle = await removeAttachmentFromArticle(articleId, filename);
-        if (updatedArticle) { // 確保函數有返回值或未拋錯
-             console.log(`[ROUTE /admin/attachments/delete] 附件 ${filename} 從文章 ${articleId} 刪除成功。`);
+        console.log(`[ROUTE /admin/attachments/delete] removeAttachmentFromArticle 返回:`, updatedArticle ? '成功' : '失敗或文章未找到');
+
+        if (updatedArticle) { // 假設成功時返回更新後的文章物件
+             console.log(`[ROUTE /admin/attachments/delete] 附件 ${filename} 從文章 ${articleId} 刪除成功。重定向...`);
              res.redirect(`/admin/edit/${articleId}?success=附件已成功刪除`);
         } else {
-             // 這種情況不應該發生，除非 removeAttachmentFromArticle 邏輯改變且返回 null/undefined 而不拋錯
-             console.warn(`[ROUTE /admin/attachments/delete] removeAttachmentFromArticle 返回了意外的值。`);
-             res.redirect(`/admin/edit/${articleId}?error=刪除附件時發生未知錯誤`);
+             // 如果 removeAttachmentFromArticle 在找不到文章或附件時返回 null/undefined 而不是拋錯
+             console.warn(`[ROUTE /admin/attachments/delete] removeAttachmentFromArticle 未能成功刪除附件 ${filename} (可能未找到)。`);
+             res.redirect(`/admin/edit/${articleId}?error=刪除附件時發生錯誤或附件未找到`);
         }
     } catch (err) {
         console.error(`[Admin] 從文章 ${articleId} 刪除附件 ${filename} 時出錯:`, err);
-        // 將錯誤傳遞給全局錯誤處理器，而不是直接重定向，以便更好地追蹤問題
+        // 將錯誤傳遞給全局錯誤處理器
         return next(err);
     }
 });
